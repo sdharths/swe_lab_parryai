@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Parry AI",
+  "version": "1.0.0",
+  "description": "Zero-budget, privacy-first AI URL analysis and protection.",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "css": ["toast.css"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Parry AI"
+  }
+}

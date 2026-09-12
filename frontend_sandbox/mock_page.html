@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parry AI - UI Sandbox</title>
+    <!-- Import fonts for the Silver Wolf aesthetic -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+    
+    <!-- Link to the extension CSS we are developing -->
+    <link rel="stylesheet" href="toast.css">
+    
+    <style>
+        /* This is just basic styling for the dummy background page */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f4f4f5;
+            color: #333;
+            margin: 0;
+            padding: 2rem;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #111;
+        }
+        .dummy-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            max-width: 600px;
+            width: 100%;
+            margin-top: 2rem;
+        }
+        .btn {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 1rem;
+        }
+        .btn:hover {
+            background: #1d4ed8;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Dummy Website</h1>
+    <p>This page simulates you browsing the web. The Parry AI extension will inject its UI over this page.</p>
+    
+    <div class="dummy-content">
+        <h2>Login to proceed</h2>
+        <p>Please enter your credentials below.</p>
+        <input type="text" placeholder="Username" style="display:block; margin-bottom:1rem; padding:0.5rem; width:90%;"><br>
+        <input type="password" placeholder="Password" style="display:block; margin-bottom:1rem; padding:0.5rem; width:90%;">
+        <button class="btn">Login</button>
+    </div>
+
+    <!-- The actual JS that the extension will run -->
+    <script src="toast.js"></script>
+    <script>
+        // Simulate the extension backend sending a response to the frontend script
+        setTimeout(() => {
+            const mockResponse = {
+                verdict: "malicious", // Change to "safe" or "suspicious" to test colors
+                risk_score: 0.85,
+                why_explainer: "Google Safe Browsing flagged this site as malicious. Furthermore, the domain appears to be a typosquat. Do not proceed.",
+                cached: false
+            };
+            // Call the function defined in toast.js to render the UI
+            renderParryAIToast(mockResponse);
+        }, 500); // Wait half a second to simulate network delay
+    </script>
+</body>
+</html>
