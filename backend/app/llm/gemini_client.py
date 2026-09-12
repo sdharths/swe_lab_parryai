@@ -4,7 +4,7 @@ from google.genai import types
 
 def generate_why_explainer(domain: str, risk_matrix: dict, mock_mode: bool = True, api_key: str = None) -> str:
     """
-    Phase 4: LLM Reasoning Layer using Gemini 1.5 Flash.
+    Phase 4: LLM Reasoning Layer using Gemini 3.6 Flash.
     If mock_mode is True, returns a fast local response.
     """
     if mock_mode or not api_key:
@@ -26,7 +26,7 @@ def generate_why_explainer(domain: str, risk_matrix: dict, mock_mode: bool = Tru
         """
         
         response = client.models.generate_content(
-            model='gemini-3.5-flash',
+            model='gemini-3.6-flash',
             contents=prompt,
         )
         return response.text.strip()
@@ -35,7 +35,7 @@ def generate_why_explainer(domain: str, risk_matrix: dict, mock_mode: bool = Tru
 
 def generate_chat_reply(message: str, domain: str, mock_mode: bool = True, api_key: str = None) -> str:
     """
-    Interactive chat layer using Gemini 3.5 Flash.
+    Interactive chat layer using Gemini 3.6 Flash.
     """
     if mock_mode or not api_key:
         return f"I'm a mock AI responding to your question: \"{message}\"."
@@ -51,7 +51,7 @@ def generate_chat_reply(message: str, domain: str, mock_mode: bool = True, api_k
         """
         
         response = client.models.generate_content(
-            model='gemini-3.5-flash',
+            model='gemini-3.6-flash',
             contents=prompt,
         )
         return response.text.strip()
