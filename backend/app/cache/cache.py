@@ -18,9 +18,15 @@ class VerdictCache:
                     risk_score REAL,
                     risk_matrix TEXT,
                     why_explainer TEXT,
-                    timestamp TEXT
+                    timestamp TEXT,
+                    suggested_questions TEXT
                 )
             """)
+            # Ensure suggested_questions column exists if table existed previously
+            try:
+                await db.execute("ALTER TABLE verdicts ADD COLUMN suggested_questions TEXT")
+            except Exception:
+                pass
             # Create index on timestamp for fast eviction
             await db.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON verdicts (timestamp)")
             await db.commit()
@@ -30,13 +36,13 @@ class VerdictCache:
         Get a cached verdict if it exists and hasn't expired.
         """
         async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute("SELECT verdict, risk_score, risk_matrix, why_explainer, timestamp FROM verdicts WHERE domain = ?", (domain,)) as cursor:
+            async with db.execute("SELECT verdict, risk_score, risk_matrix, why_explainer, timestamp, suggested_questions FROM verdicts WHERE domain = ?", (domain,)) as cursor:
                 row = await cursor.fetchone()
                 
                 if not row:
                     return None
                     
-                verdict, risk_score, risk_matrix_str, why_explainer, timestamp_str = row
+                verdict, risk_score, risk_matrix_str, why_explainer, timestamp_str, suggested_questions_str = row
                 
                 # Check TTL
                 analyzed_at = datetime.fromisoformat(timestamp_str)
@@ -48,6 +54,13 @@ class VerdictCache:
                     # Expired
                     return None
                     
+                suggested_questions = []
+                if suggested_questions_str:
+                    try:
+                        suggested_questions = json.loads(suggested_questions_str)
+                    except Exception:
+                        suggested_questions = []
+
                 return AnalyzeResponse(
                     url="",  # We'll fill this in main.py
                     domain=domain,
@@ -56,7 +69,8 @@ class VerdictCache:
                     risk_matrix=RiskMatrix(**json.loads(risk_matrix_str)),
                     why_explainer=why_explainer,
                     cached=True,
-                    analyzed_at=timestamp_str
+                    analyzed_at=timestamp_str,
+                    suggested_questions=suggested_questions
                 )
 
     async def put(self, domain: str, response: AnalyzeResponse):
@@ -65,13 +79,14 @@ class VerdictCache:
         """
         timestamp = datetime.now(timezone.utc).isoformat()
         risk_matrix_str = response.risk_matrix.model_dump_json()
+        suggested_questions_str = json.dumps(response.suggested_questions or [])
         
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 INSERT OR REPLACE INTO verdicts 
-                (domain, verdict, risk_score, risk_matrix, why_explainer, timestamp) 
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (domain, response.verdict, response.risk_score, risk_matrix_str, response.why_explainer, timestamp))
+                (domain, verdict, risk_score, risk_matrix, why_explainer, timestamp, suggested_questions) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (domain, response.verdict, response.risk_score, risk_matrix_str, response.why_explainer, timestamp, suggested_questions_str))
             await db.commit()
             
         # Evict old entries if we exceed cap (background/async)

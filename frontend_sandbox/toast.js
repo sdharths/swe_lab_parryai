@@ -1,39 +1,53 @@
-// Parry AI - Extension UI Logic
+// Parry AI - Extension UI Logic for Sandbox Demonstration
 
 function renderParryAIToast(response) {
-    // Prevent duplicate injections
-    if (document.getElementById('parry-ai-container')) {
-        return;
-    }
+    if (document.getElementById('parry-ai-container')) return;
 
     const isDangerous = (response.verdict === "malicious" || response.verdict === "suspicious");
 
-    // Determine badge class
     let badgeClass = "safe";
     if (response.verdict === "malicious") badgeClass = "malicious";
     else if (response.verdict === "suspicious") badgeClass = "suspicious";
 
-    // 1. Inject Backdrop if dangerous
     let backdrop = null;
     if (isDangerous) {
         backdrop = document.createElement('div');
         backdrop.id = 'parry-ai-backdrop';
         document.body.appendChild(backdrop);
-        
-        // Trigger reflow
         backdrop.offsetHeight;
         backdrop.classList.add('show');
-        
-        // Prevent scrolling on the body
         document.body.style.overflow = 'hidden';
     }
 
-    // 2. Build the Main Container
     const container = document.createElement('div');
     container.id = 'parry-ai-container';
     if (isDangerous) {
         container.classList.add('blocking-mode');
     }
+
+    // Default localStorage mock
+    const getStored = (key, def) => {
+        try {
+            const v = localStorage.getItem(key);
+            return v ? JSON.parse(v) : def;
+        } catch(e) { return def; }
+    };
+    const setStored = (key, val) => {
+        try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) {}
+    };
+
+    // Auto log to intercepted history
+    const hist = getStored('parry_history', [
+        { domain: "scam-login.com", verdict: "malicious", choice: "Blocked", timestamp: new Date(Date.now() - 3600000).toISOString() },
+        { domain: "github.com", verdict: "safe", choice: "Allowed", timestamp: new Date(Date.now() - 7200000).toISOString() }
+    ]);
+    hist.unshift({
+        domain: window.location.hostname || "sandbox.local",
+        verdict: response.verdict,
+        choice: "Auto-Scanned",
+        timestamp: new Date().toISOString()
+    });
+    setStored('parry_history', hist.slice(0, 50));
     
     container.innerHTML = `
         <div class="parry-header">
@@ -43,21 +57,27 @@ function renderParryAIToast(response) {
                 </svg>
                 PARRY AI
             </h2>
-            <div class="parry-badge ${badgeClass}">${response.verdict}</div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <div class="parry-badge ${badgeClass}">${response.verdict}</div>
+                <button class="parry-close-btn" id="parry-modal-close" title="Close Notification">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
         </div>
         
         <div class="parry-body">
             ${isDangerous ? 'This site has been flagged as potentially dangerous. Access has been halted to protect your security.' : 'This site appears safe based on our current analysis.'}
         </div>
         
-        ${isDangerous ? `
-            <button class="parry-ai-btn" id="parry-ai-why-btn">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                Why is this dangerous?
-            </button>
-        ` : ''}
+        <button class="parry-ai-btn" id="parry-ai-why-btn" style="margin-bottom: 16px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            ${isDangerous ? 'Why is this dangerous?' : 'Why is this safe?'}
+        </button>
         
-        <div class="parry-score-container">
+        <div class="parry-score-container" style="margin-top:0;">
             <span class="parry-score-label">RISK FACTOR:</span>
             <span class="parry-score-value" style="color: ${badgeClass === 'malicious' ? '#ff0055' : (badgeClass === 'suspicious' ? '#ffaa00' : '#00ffaa')}">
                 ${Math.round(response.risk_score * 100)}%
@@ -81,10 +101,17 @@ function renderParryAIToast(response) {
     `;
 
     document.body.appendChild(container);
-
-    // Trigger reflow
     container.offsetHeight; 
     container.classList.add('show');
+
+    // X close button handler
+    const modalClose = container.querySelector('#parry-modal-close');
+    if (modalClose) {
+        modalClose.addEventListener('click', () => {
+            if (isDangerous) document.body.style.overflow = '';
+            closeParryUI();
+        });
+    }
 
     // Handle "Why is this dangerous?" toggle
     let sidebar = null;
@@ -92,7 +119,18 @@ function renderParryAIToast(response) {
     if (whyBtn) {
         whyBtn.addEventListener('click', () => {
             if (!sidebar) {
-                // Create sidebar on first click
+                const interceptHttps = getStored('parry_intercept_https', true);
+                const notifyHttps = getStored('parry_notify_https', true);
+                const silenceSafe = getStored('parry_silence_safe', false);
+
+                const suggestedQuestions = (response.suggested_questions && response.suggested_questions.length > 0)
+                    ? response.suggested_questions
+                    : [
+                        "What is this site used for?",
+                        "What kind of usage does this site have?",
+                        "Is it safe to login or enter credentials here?"
+                    ];
+
                 sidebar = document.createElement('div');
                 sidebar.id = 'parry-ai-sidebar';
                 sidebar.innerHTML = `
@@ -111,39 +149,79 @@ function renderParryAIToast(response) {
                     <div class="parry-sidebar-tabs">
                         <div class="parry-tab active" id="tab-chat">CHAT</div>
                         <div class="parry-tab" id="tab-history">HISTORY</div>
+                        <div class="parry-tab" id="tab-settings">SETTINGS</div>
                     </div>
                     
                     <!-- Chat View -->
                     <div class="parry-sidebar-view active" id="view-chat">
                         <div class="parry-chat-area" id="parry-chat-area">
                             <div class="parry-chat-bubble ai">
-                                <strong>Gemini 1.5 Flash:</strong><br><br>
-                                ${response.why_explainer}
+                                <strong>Parry AI:</strong><br><br>
+                                ${response.why_explainer}<br><br>
+                                <em>Ask me anything or click a suggested question below:</em>
+                            </div>
+                        </div>
+
+                        <div class="parry-suggested-section">
+                            <div class="parry-suggested-title">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                                SUGGESTED QUESTIONS (BY AI)
+                            </div>
+                            <div class="parry-questions-list" id="parry-questions-list">
+                                ${suggestedQuestions.map(q => `<button class="parry-question-pill">${q}</button>`).join('')}
                             </div>
                         </div>
                     </div>
                     
                     <!-- History View -->
                     <div class="parry-sidebar-view" id="view-history">
-                        <div class="parry-history-list">
-                            <div class="parry-history-item malicious">
-                                <div class="parry-history-domain">scam-login.com</div>
-                                <div class="parry-history-choice">Verdict: Malicious | Your Choice: Blocked</div>
+                        <div class="parry-subtabs">
+                            <button class="parry-subtab active" id="subtab-sites">INTERCEPTED SITES</button>
+                            <button class="parry-subtab" id="subtab-chats">CHAT LOGS</button>
+                        </div>
+                        <div class="parry-history-list" id="history-content-area"></div>
+                    </div>
+
+                    <!-- Settings View -->
+                    <div class="parry-sidebar-view" id="view-settings">
+                        <div class="parry-settings-group">
+                            <div class="parry-setting-card">
+                                <div class="parry-setting-info">
+                                    <div class="parry-setting-title">Intercept Dangerous HTTPS</div>
+                                    <div class="parry-setting-desc">Block and show high-priority security shield when visiting malicious/suspicious HTTPS sites.</div>
+                                </div>
+                                <label class="parry-switch">
+                                    <input type="checkbox" id="setting-intercept-https" ${interceptHttps ? 'checked' : ''}>
+                                    <span class="parry-slider"></span>
+                                </label>
                             </div>
-                            <div class="parry-history-item suspicious">
-                                <div class="parry-history-domain">unusual-bank.net</div>
-                                <div class="parry-history-choice">Verdict: Suspicious | Your Choice: Ignored & Proceeded</div>
+
+                            <div class="parry-setting-card">
+                                <div class="parry-setting-info">
+                                    <div class="parry-setting-title">Notify On HTTPS Sites</div>
+                                    <div class="parry-setting-desc">Show Parry AI analysis toasts whenever browsing secure (HTTPS) pages.</div>
+                                </div>
+                                <label class="parry-switch">
+                                    <input type="checkbox" id="setting-notify-https" ${notifyHttps ? 'checked' : ''}>
+                                    <span class="parry-slider"></span>
+                                </label>
                             </div>
-                            <div class="parry-history-item safe">
-                                <div class="parry-history-domain">github.com</div>
-                                <div class="parry-history-choice">Verdict: Safe | Your Choice: Allowed</div>
+
+                            <div class="parry-setting-card">
+                                <div class="parry-setting-info">
+                                    <div class="parry-setting-title">Silence Safe Verified Sites</div>
+                                    <div class="parry-setting-desc">Don't show the initial popup on domains that are confirmed 100% safe.</div>
+                                </div>
+                                <label class="parry-switch">
+                                    <input type="checkbox" id="setting-silence-safe" ${silenceSafe ? 'checked' : ''}>
+                                    <span class="parry-slider"></span>
+                                </label>
                             </div>
                         </div>
                     </div>
                     
-                    <!-- Chat Input Container (only visible when Chat is active) -->
                     <div class="parry-chat-input-container" id="chat-input-container">
-                        <input type="text" class="parry-chat-input" id="parry-chat-input" placeholder="Ask Gemini about this site...">
+                        <input type="text" class="parry-chat-input" id="parry-chat-input" placeholder="Ask Parry AI about this site...">
                         <button class="parry-chat-send" id="parry-chat-send">SEND</button>
                     </div>
                 `;
@@ -157,24 +235,79 @@ function renderParryAIToast(response) {
                 // Tabs logic
                 const tabChat = document.getElementById('tab-chat');
                 const tabHistory = document.getElementById('tab-history');
+                const tabSettings = document.getElementById('tab-settings');
                 const viewChat = document.getElementById('view-chat');
                 const viewHistory = document.getElementById('view-history');
+                const viewSettings = document.getElementById('view-settings');
                 const chatInputContainer = document.getElementById('chat-input-container');
+
+                function switchMainTab(activeTab, activeView, showInput) {
+                    [tabChat, tabHistory, tabSettings].forEach(t => t.classList.remove('active'));
+                    [viewChat, viewHistory, viewSettings].forEach(v => v.classList.remove('active'));
+                    activeTab.classList.add('active');
+                    activeView.classList.add('active');
+                    chatInputContainer.style.display = showInput ? 'flex' : 'none';
+                }
                 
-                tabChat.addEventListener('click', () => {
-                    tabChat.classList.add('active');
-                    tabHistory.classList.remove('active');
-                    viewChat.classList.add('active');
-                    viewHistory.classList.remove('active');
-                    chatInputContainer.style.display = 'flex';
-                });
-                
+                tabChat.addEventListener('click', () => switchMainTab(tabChat, viewChat, true));
                 tabHistory.addEventListener('click', () => {
-                    tabHistory.classList.add('active');
-                    tabChat.classList.remove('active');
-                    viewHistory.classList.add('active');
-                    viewChat.classList.remove('active');
-                    chatInputContainer.style.display = 'none';
+                    switchMainTab(tabHistory, viewHistory, false);
+                    loadHistoryView('sites');
+                });
+                tabSettings.addEventListener('click', () => switchMainTab(tabSettings, viewSettings, false));
+
+                // Sub-tabs in history
+                const subtabSites = document.getElementById('subtab-sites');
+                const subtabChats = document.getElementById('subtab-chats');
+                const historyContent = document.getElementById('history-content-area');
+
+                function loadHistoryView(mode) {
+                    const siteHist = getStored('parry_history', []);
+                    const chatHist = getStored('parry_chat_history', []);
+
+                    if (mode === 'sites') {
+                        subtabSites.classList.add('active');
+                        subtabChats.classList.remove('active');
+                        if (siteHist.length === 0) {
+                            historyContent.innerHTML = '<div class="parry-history-item safe">No intercepted sites yet.</div>';
+                        } else {
+                            historyContent.innerHTML = siteHist.map(item => `
+                                <div class="parry-history-item ${item.verdict}">
+                                    <div class="parry-history-domain">${item.domain}</div>
+                                    <div class="parry-history-choice">Verdict: <strong>${item.verdict}</strong> | Action: ${item.choice}</div>
+                                    <div style="font-size:11px; color:#94a3b8; margin-top:4px;">${new Date(item.timestamp).toLocaleTimeString()}</div>
+                                </div>
+                            `).join('');
+                        }
+                    } else {
+                        subtabChats.classList.add('active');
+                        subtabSites.classList.remove('active');
+                        if (chatHist.length === 0) {
+                            historyContent.innerHTML = '<div class="parry-history-item safe">No saved chat history yet.</div>';
+                        } else {
+                            historyContent.innerHTML = chatHist.map(chat => `
+                                <div class="parry-history-item ${chat.sender === 'You' ? 'safe' : 'suspicious'}">
+                                    <div class="parry-history-domain" style="font-size:12px; color:#00f0ff;">${chat.domain} &bull; ${chat.sender}</div>
+                                    <div class="parry-history-choice" style="color:#ffffff; margin-top:4px;">${chat.text}</div>
+                                    <div style="font-size:11px; color:#94a3b8; margin-top:4px;">${new Date(chat.timestamp).toLocaleTimeString()}</div>
+                                </div>
+                            `).join('');
+                        }
+                    }
+                }
+
+                subtabSites.addEventListener('click', () => loadHistoryView('sites'));
+                subtabChats.addEventListener('click', () => loadHistoryView('chats'));
+
+                // Setting checkbox listeners
+                document.getElementById('setting-intercept-https').addEventListener('change', (e) => {
+                    setStored('parry_intercept_https', e.target.checked);
+                });
+                document.getElementById('setting-notify-https').addEventListener('change', (e) => {
+                    setStored('parry_notify_https', e.target.checked);
+                });
+                document.getElementById('setting-silence-safe').addEventListener('change', (e) => {
+                    setStored('parry_silence_safe', e.target.checked);
                 });
                 
                 // Chat logic
@@ -182,59 +315,74 @@ function renderParryAIToast(response) {
                 const chatInput = document.getElementById('parry-chat-input');
                 const chatArea = document.getElementById('parry-chat-area');
                 
-                const handleSend = () => {
-                    const text = chatInput.value.trim();
+                const submitQuestion = (queryText) => {
+                    const text = (queryText || chatInput.value).trim();
                     if (!text) return;
                     
-                    // Add User message
                     const userMsg = document.createElement('div');
                     userMsg.className = 'parry-chat-bubble user';
                     userMsg.innerHTML = `<strong>You:</strong><br><br>${text}`;
                     chatArea.appendChild(userMsg);
                     chatInput.value = '';
                     chatArea.scrollTop = chatArea.scrollHeight;
+
+                    // Save chat to local storage
+                    const chats = getStored('parry_chat_history', []);
+                    chats.unshift({ sender: 'You', text: text, domain: window.location.hostname || "sandbox.local", timestamp: new Date().toISOString() });
+                    setStored('parry_chat_history', chats);
                     
-                    // Simulate AI typing delay
-                    setTimeout(() => {
-                        const aiMsg = document.createElement('div');
-                        aiMsg.className = 'parry-chat-bubble ai';
-                        aiMsg.innerHTML = `<strong>Gemini 1.5 Flash:</strong><br><br>I'm a mock AI responding to your question: "${text}". In the final version, this will be sent to the Gemini API for a real follow-up response!`;
-                        chatArea.appendChild(aiMsg);
+                    // Simulate/Trigger AI response
+                    const typingMsg = document.createElement('div');
+                    typingMsg.className = 'parry-chat-bubble ai';
+                    typingMsg.innerHTML = `<strong>Parry AI:</strong><br><br><em>Analyzing...</em>`;
+                    chatArea.appendChild(typingMsg);
+                    chatArea.scrollTop = chatArea.scrollHeight;
+
+                    fetch("http://127.0.0.1:8000/chat", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ message: text, domain: window.location.hostname || "sandbox.local" })
+                    })
+                    .then(r => r.json())
+                    .then(d => {
+                        const reply = d.reply || "Analysis complete.";
+                        typingMsg.innerHTML = `<strong>Parry AI:</strong><br><br>${reply}`;
+                        chats.unshift({ sender: 'Parry AI', text: reply, domain: window.location.hostname || "sandbox.local", timestamp: new Date().toISOString() });
+                        setStored('parry_chat_history', chats);
                         chatArea.scrollTop = chatArea.scrollHeight;
-                    }, 800);
+                    })
+                    .catch(() => {
+                        const fallback = `Parry AI analysis for "${text}": This site appears to operate within expected parameters. Always verify login fields.`;
+                        typingMsg.innerHTML = `<strong>Parry AI:</strong><br><br>${fallback}`;
+                        chats.unshift({ sender: 'Parry AI', text: fallback, domain: window.location.hostname || "sandbox.local", timestamp: new Date().toISOString() });
+                        setStored('parry_chat_history', chats);
+                        chatArea.scrollTop = chatArea.scrollHeight;
+                    });
                 };
+
+                // Suggested question pills
+                sidebar.querySelectorAll('.parry-question-pill').forEach(pill => {
+                    pill.addEventListener('click', () => submitQuestion(pill.textContent));
+                });
                 
-                sendBtn.addEventListener('click', handleSend);
+                sendBtn.addEventListener('click', () => submitQuestion());
                 chatInput.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') handleSend();
+                    if (e.key === 'Enter') submitQuestion();
                 });
             }
             
-            // Trigger reflow and show
             sidebar.offsetHeight;
             sidebar.classList.add('show');
         });
     }
 
-    // Handle "Return to Safety" / "Acknowledge"
     document.getElementById('parry-safe-btn').addEventListener('click', () => {
-        if (!isDangerous) {
-            const neverShow = document.getElementById('parry-never-show')?.checked;
-            if (neverShow) {
-                alert("Settings saved: Parry AI safe popups will be disabled.");
-            }
-        } else {
-            // In a real extension, we might close the tab or go back
-            alert("Parry AI: Returning to safety (would close tab or navigate back).");
-        }
         closeParryUI();
     });
 
-    // Handle "Ignore & Proceed"
     const ignoreBtn = document.getElementById('parry-ignore-btn');
     if (ignoreBtn) {
         ignoreBtn.addEventListener('click', () => {
-            // Remove the block and allow the user to view the site
             document.body.style.overflow = '';
             closeParryUI();
         });
@@ -249,6 +397,6 @@ function renderParryAIToast(response) {
             container.remove();
             if (backdrop) backdrop.remove();
             if (sidebar) sidebar.remove();
-        }, 400); // Wait for transition
+        }, 400);
     }
 }

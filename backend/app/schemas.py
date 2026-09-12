@@ -19,6 +19,7 @@ class AnalyzeResponse(BaseModel):
     why_explainer: str
     cached: bool
     analyzed_at: str
+    suggested_questions: list[str] = []
 
 class ChatRequest(BaseModel):
     message: str
@@ -26,3 +27,9 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+
+class QuestionsRequest(BaseModel):
+    domain: str
+
+class QuestionsResponse(BaseModel):
+    questions: list[str] = []

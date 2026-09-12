@@ -2,12 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
 from urllib.parse import urlparse
-from backend.app.schemas import AnalyzeRequest, AnalyzeResponse, RiskMatrix, ChatRequest, ChatResponse
+from backend.app.schemas import AnalyzeRequest, AnalyzeResponse, RiskMatrix, ChatRequest, ChatResponse, QuestionsRequest, QuestionsResponse
 from backend.app.llm.key_rotator import KeyRotator
 from backend.app.heuristics import run_heuristics
 from backend.app.signals.sensors import run_sensor_fusion
 from backend.app.cache.cache import VerdictCache
-from backend.app.llm.gemini_client import generate_why_explainer, generate_chat_reply
+from backend.app.llm.gemini_client import generate_why_explainer, generate_chat_reply, generate_suggested_questions
 from backend.app.scoring import calculate_risk
 from contextlib import asynccontextmanager
 import os
@@ -65,6 +65,7 @@ async def analyze_url(req: AnalyzeRequest):
         return cached_resp
         
     # 2. Cache miss, run heuristics and sensors
+    suggested_questions = []
     try:
         heuristic_flags = run_heuristics(domain)
         sensor_data = run_sensor_fusion(req.url, domain)
@@ -86,6 +87,13 @@ async def analyze_url(req: AnalyzeRequest):
             mock_mode=MOCK_MODE,
             api_key=GEMINI_API_KEY
         )
+
+        # 5. Generate contextual intuitive suggested questions
+        suggested_questions = generate_suggested_questions(
+            domain=domain,
+            mock_mode=MOCK_MODE,
+            api_key=GEMINI_API_KEY
+        )
         
     except Exception as e:
         # Phase 6: Graceful Degradation / Offline Fallback
@@ -99,6 +107,11 @@ async def analyze_url(req: AnalyzeRequest):
         risk_score = 0.5
         verdict = "local_fallback"
         why_explainer = f"Analysis failed: {str(e)}. Please check your API keys or network connection."
+        suggested_questions = [
+            f"What is {domain}?",
+            f"Is {domain} secure to browse?",
+            "What should I do if a site fails verification?"
+        ]
 
     response = AnalyzeResponse(
         url=req.url,
@@ -108,12 +121,26 @@ async def analyze_url(req: AnalyzeRequest):
         risk_matrix=RiskMatrix(**risk_matrix_dict),
         why_explainer=why_explainer,
         cached=False,
-        analyzed_at=datetime.now(timezone.utc).isoformat()
+        analyzed_at=datetime.now(timezone.utc).isoformat(),
+        suggested_questions=suggested_questions
     )
     
     # 3. Store in cache
     await cache.put(domain, response)
     return response
+
+@app.post("/suggested-questions", response_model=QuestionsResponse)
+async def get_suggested_questions(req: QuestionsRequest):
+    """
+    Generate intuitive questions about a specific domain on demand.
+    """
+    domain = extract_domain(req.domain)
+    questions = generate_suggested_questions(
+        domain=domain,
+        mock_mode=MOCK_MODE,
+        api_key=GEMINI_API_KEY
+    )
+    return QuestionsResponse(questions=questions)
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_with_ai(req: ChatRequest):

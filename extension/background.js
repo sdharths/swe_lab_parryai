@@ -59,5 +59,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
         
         return true;
+    } else if (request.action === "get_suggested_questions") {
+        fetch(API_URL.replace("/analyze", "/suggested-questions"), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ domain: request.domain })
+        })
+        .then(response => {
+            if (!response.ok) throw new Error("Questions response not ok");
+            return response.json();
+        })
+        .then(data => {
+            sendResponse({ success: true, questions: data.questions || [] });
+        })
+        .catch(error => {
+            console.error("Suggested Questions Error:", error);
+            sendResponse({ 
+                success: false, 
+                questions: [
+                    `What is ${request.domain} used for?`,
+                    `Is it safe to login on ${request.domain}?`,
+                    `What precautions should I take on ${request.domain}?`
+                ] 
+            });
+        });
+
+        return true;
     }
 });

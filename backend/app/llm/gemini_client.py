@@ -57,3 +57,44 @@ def generate_chat_reply(message: str, domain: str, mock_mode: bool = True, api_k
         return response.text.strip()
     except Exception as e:
         return f"Chat Error: {str(e)}"
+
+def generate_suggested_questions(domain: str, mock_mode: bool = True, api_key: str = None) -> list[str]:
+    """
+    Generates 3 intuitive contextual questions about what the site is for,
+    its typical usage, and security considerations.
+    """
+    default_questions = [
+        f"What is {domain} used for?",
+        f"Is it safe to login or enter personal details on {domain}?",
+        f"What security precautions should I take on {domain}?"
+    ]
+    if mock_mode or not api_key:
+        return default_questions
+
+    try:
+        import json
+        client = genai.Client(api_key=api_key)
+        prompt = f"""
+        Given the domain "{domain}", generate exactly 3 intuitive, practical questions that a user browsing this site would ask an AI cybersecurity assistant.
+        Questions should cover what this site is for, its common usage, and safety/data security advice.
+        Keep each question under 15 words.
+        Return ONLY a JSON array of 3 strings, with no markdown code fences or other text.
+        Example: ["What is this site used for?", "Is it safe to login or buy products here?", "What precautions should I take on this site?"]
+        """
+        response = client.models.generate_content(
+            model='gemini-3.6-flash',
+            contents=prompt,
+        )
+        raw_text = response.text.strip()
+        # Remove potential backticks/formatting
+        if raw_text.startswith("```"):
+            raw_text = raw_text.strip("`")
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:].strip()
+        parsed = json.loads(raw_text)
+        if isinstance(parsed, list) and len(parsed) > 0:
+            return [str(q).strip() for q in parsed[:3]]
+        return default_questions
+    except Exception:
+        return default_questions
+
