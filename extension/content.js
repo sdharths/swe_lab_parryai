@@ -17,11 +17,26 @@ fontLink3.rel = 'stylesheet';
 fontLink3.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Orbitron:wght@500;700;900&display=swap';
 document.head.appendChild(fontLink3);
 
-// 2. Ask Background for Analysis
-chrome.runtime.sendMessage({ action: "analyze_url", url: window.location.href }, (response) => {
-    if (response && response.data) {
-        checkSettingsAndRender(response.data);
+const CURRENT_DOMAIN = window.location.hostname || "unknown";
+
+// Initialize Privacy Radar, Download Guard, and Google SERP badging
+initPrivacyRadar();
+initDownloadGuard();
+initGoogleSerpBadging();
+
+// 2. Ask Background for Analysis (Checking Custom Whitelist first)
+chrome.storage.local.get({ whitelist: [] }, (stored) => {
+    const whitelist = stored.whitelist || [];
+    if (whitelist.includes(CURRENT_DOMAIN)) {
+        console.log(`[Parry AI] ${CURRENT_DOMAIN} is on your Custom Whitelist. Skipping interception.`);
+        return;
     }
+
+    chrome.runtime.sendMessage({ action: "analyze_url", url: window.location.href }, (response) => {
+        if (response && response.data) {
+            checkSettingsAndRender(response.data);
+        }
+    });
 });
 
 function checkSettingsAndRender(apiResponse) {
@@ -36,7 +51,6 @@ function checkSettingsAndRender(apiResponse) {
         if (isHttps && !settings.interceptHttps) {
             const isDangerous = (apiResponse.verdict === 'malicious' || apiResponse.verdict === 'suspicious');
             if (isDangerous) {
-                // User disabled intercepting/blocking on HTTPS
                 return;
             }
         }
@@ -55,6 +69,19 @@ function checkSettingsAndRender(apiResponse) {
     });
 }
 
+function calculateThreatTheme(verdict, legality) {
+    const v = (verdict || "").toLowerCase();
+    const l = (legality || "").toLowerCase();
+
+    if (v === "malicious" || l === "illegal") {
+        return "threat-theme-high";
+    }
+    if (v === "suspicious" || l.includes("gray")) {
+        return "threat-theme-medium";
+    }
+    return "threat-theme-low";
+}
+
 function renderParryAIToast(response) {
     if (document.getElementById('parry-ai-container')) return;
 
@@ -63,6 +90,8 @@ function renderParryAIToast(response) {
     let badgeClass = "safe";
     if (response.verdict === "malicious") badgeClass = "malicious";
     else if (response.verdict === "suspicious") badgeClass = "suspicious";
+
+    const threatThemeClass = calculateThreatTheme(response.verdict, response.legality_status);
 
     let backdrop = null;
     if (isDangerous) {
@@ -76,10 +105,30 @@ function renderParryAIToast(response) {
 
     const container = document.createElement('div');
     container.id = 'parry-ai-container';
+    container.classList.add(threatThemeClass);
     if (isDangerous) container.classList.add('blocking-mode');
     
-    // Automatically log this site interception to history
+    // Automatically log this site interception to history and recap stats
     logHistory('Auto-Scanned');
+
+    // Extract privacy stats
+    const privacyStats = window._parryPrivacyStats || { trackers: 0, thirdPartyScripts: 0, forms: 0, risk: "Low" };
+
+    // Format legal alternatives pills
+    const legalAlts = response.legal_alternatives || [];
+    const legalAltsHtml = legalAlts.length > 0 ? `
+        <div style="margin-top: 14px; text-align: left;">
+            <div style="font-size: 11px; font-weight: 700; color: #00f0ff; letter-spacing: 0.5px; text-transform: uppercase;">
+                🛡️ Verified Legal Alternatives:
+            </div>
+            <div class="parry-alt-pills">
+                ${legalAlts.map(alt => {
+                    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(alt)}`;
+                    return `<a href="${searchUrl}" target="_blank" class="parry-alt-pill" title="Search for ${alt}">+ ${alt}</a>`;
+                }).join('')}
+            </div>
+        </div>
+    ` : '';
 
     container.innerHTML = `
         <div class="parry-header">
@@ -89,8 +138,9 @@ function renderParryAIToast(response) {
                 </svg>
                 PARRY AI
             </h2>
-            <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
                 <div class="parry-badge ${badgeClass}">${response.verdict}</div>
+                <div class="parry-badge legality-${(response.legality_status || 'Legal').toLowerCase().replace(' ', '-')}">${response.legality_status || 'Legal'}</div>
                 <button class="parry-close-btn" id="parry-modal-close" title="Close Notification">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -104,9 +154,9 @@ function renderParryAIToast(response) {
             ${isDangerous ? 'This site has been flagged as potentially dangerous. Access has been halted to protect your security.' : 'This site appears safe based on our current analysis.'}
         </div>
         
-        <button class="parry-ai-btn" id="parry-ai-why-btn" style="margin-bottom: 16px;">
+        <button class="parry-ai-btn" id="parry-ai-why-btn" style="margin-bottom: 12px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-            ${isDangerous ? 'Why is this dangerous?' : 'Why is this safe?'}
+            ${isDangerous ? 'Why is this dangerous?' : 'Open Shield Dashboard & AI'}
         </button>
         
         <div class="parry-score-container" style="margin-top: 0;">
@@ -115,16 +165,34 @@ function renderParryAIToast(response) {
                 ${Math.round(response.risk_score * 100)}%
             </span>
         </div>
+
+        <!-- Privacy & Exfiltration Radar Box -->
+        <div class="parry-radar-card">
+            <div class="parry-radar-header">
+                <span>📡 PRIVACY RADAR</span>
+                <span style="color: ${privacyStats.risk === 'High' ? '#ff0055' : (privacyStats.risk === 'Moderate' ? '#ffaa00' : '#00ffaa')}">${privacyStats.risk} Exfil Risk</span>
+            </div>
+            <div class="parry-radar-stats">
+                <span class="parry-radar-chip">${privacyStats.trackers} Trackers</span>
+                <span class="parry-radar-chip">${privacyStats.thirdPartyScripts} 3rd-Party Scripts</span>
+                <span class="parry-radar-chip">${privacyStats.forms} Input Forms</span>
+            </div>
+        </div>
+
+        ${legalAltsHtml}
         
-        <div class="parry-feedback-container">
-            <span style="font-size: 13px; color: #94a3b8;">Was this verdict accurate?</span>
+        <div class="parry-feedback-container" style="margin-top: 14px;">
             <div style="display: flex; gap: 8px;">
+                <button class="parry-whitelist-btn" id="parry-btn-whitelist" title="Whitelist domain">+ Whitelist Domain</button>
+                <button class="parry-report-btn" id="parry-btn-report-fp" title="Report Incorrect Rating">⚠️ Report Rating</button>
+            </div>
+            <div style="display: flex; gap: 6px;">
                 <button class="parry-feedback-btn" id="parry-feedback-up" title="Accurate">👍</button>
                 <button class="parry-feedback-btn" id="parry-feedback-down" title="Inaccurate">👎</button>
             </div>
         </div>
         
-        <div class="parry-footer">
+        <div class="parry-footer" style="margin-top: 16px;">
             ${isDangerous ? `
                 <div class="parry-actions">
                     <button class="parry-btn parry-btn-danger" id="parry-ignore-btn">Ignore & Proceed</button>
@@ -157,30 +225,79 @@ function renderParryAIToast(response) {
         });
     }
 
+    // Whitelist Domain Button
+    const whitelistBtn = container.querySelector('#parry-btn-whitelist');
+    if (whitelistBtn) {
+        whitelistBtn.addEventListener('click', () => {
+            chrome.storage.local.get({ whitelist: [] }, (res) => {
+                const list = res.whitelist || [];
+                if (!list.includes(CURRENT_DOMAIN)) {
+                    list.push(CURRENT_DOMAIN);
+                    chrome.storage.local.set({ whitelist: list }, () => {
+                        whitelistBtn.textContent = '✓ Whitelisted';
+                        whitelistBtn.style.color = '#00ffaa';
+                        setTimeout(() => closeParryUI(), 1000);
+                    });
+                }
+            });
+        });
+    }
+
+    // False Positive Reporting Button
+    const reportBtn = container.querySelector('#parry-btn-report-fp');
+    if (reportBtn) {
+        reportBtn.addEventListener('click', () => {
+            const reason = prompt(`Report verdict error for ${CURRENT_DOMAIN}:\nWhy is this rating inaccurate? (Optional)`);
+            if (reason !== null) {
+                chrome.runtime.sendMessage({
+                    action: "report_verdict",
+                    url: window.location.href,
+                    domain: CURRENT_DOMAIN,
+                    verdict: response.verdict,
+                    report_type: isDangerous ? "false_positive" : "false_negative",
+                    user_comment: reason
+                }, (resp) => {
+                    reportBtn.textContent = "✓ Report Sent";
+                    reportBtn.style.color = "#00ffaa";
+                });
+            }
+        });
+    }
+
     // Interception / Site History helper
     function logHistory(choice) {
-        chrome.storage.local.get({ history: [] }, (result) => {
-            const hist = result.history;
+        chrome.storage.local.get({ history: [], recapStats: { totalScanned: 0, threatsBlocked: 0, piracyFlagged: 0 } }, (result) => {
+            const hist = result.history || [];
             hist.unshift({
-                domain: window.location.hostname || "current-site",
+                domain: CURRENT_DOMAIN,
                 verdict: response.verdict,
+                legality: response.legality_status || "Legal",
                 choice: choice,
                 timestamp: new Date().toISOString()
             });
-            // Keep last 60 items
             if (hist.length > 60) hist.pop();
-            chrome.storage.local.set({ history: hist });
+
+            const stats = result.recapStats || { totalScanned: 0, threatsBlocked: 0, piracyFlagged: 0 };
+            stats.totalScanned += 1;
+            if (response.verdict === 'malicious' || response.verdict === 'suspicious') {
+                stats.threatsBlocked += 1;
+            }
+            if ((response.legality_status || "").toLowerCase() === 'illegal' || (response.legality_status || "").toLowerCase().includes('gray')) {
+                stats.piracyFlagged += 1;
+            }
+
+            chrome.storage.local.set({ history: hist, recapStats: stats });
         });
     }
 
     // Chat History helper
     function saveChatEntry(sender, text, domain) {
         chrome.storage.local.get({ chatHistory: [] }, (result) => {
-            const chats = result.chatHistory;
+            const chats = result.chatHistory || [];
             chats.unshift({
                 sender: sender,
                 text: text,
-                domain: domain || window.location.hostname,
+                domain: domain || CURRENT_DOMAIN,
                 timestamp: new Date().toISOString()
             });
             if (chats.length > 100) chats.pop();
@@ -188,7 +305,7 @@ function renderParryAIToast(response) {
         });
     }
 
-    // Feedback logic (Phase 8)
+    // Feedback logic
     const upBtn = container.querySelector('#parry-feedback-up');
     const downBtn = container.querySelector('#parry-feedback-down');
     
@@ -197,10 +314,10 @@ function renderParryAIToast(response) {
         downBtn.classList.toggle('selected', !isAccurate);
         
         chrome.storage.local.get({ userFeedback: [] }, (result) => {
-            const feedbacks = result.userFeedback;
-            const filtered = feedbacks.filter(f => f.domain !== window.location.hostname);
+            const feedbacks = result.userFeedback || [];
+            const filtered = feedbacks.filter(f => f.domain !== CURRENT_DOMAIN);
             filtered.unshift({
-                domain: window.location.hostname,
+                domain: CURRENT_DOMAIN,
                 verdict: response.verdict,
                 accurate: isAccurate,
                 timestamp: new Date().toISOString()
@@ -230,7 +347,9 @@ function renderParryAIToast(response) {
                     chatHistory: [],
                     neverShowSafe: false,
                     interceptHttps: true,
-                    notifyHttps: true
+                    notifyHttps: true,
+                    recapStats: { totalScanned: 0, threatsBlocked: 0, piracyFlagged: 0 },
+                    whitelist: []
                 }, (stored) => {
                     renderSidebarContent(stored);
                 });
@@ -241,14 +360,15 @@ function renderParryAIToast(response) {
     }
 
     function renderSidebarContent(stored) {
-        // Suggested questions from API response or fallbacks
         const suggestedList = (response.suggested_questions && response.suggested_questions.length > 0)
             ? response.suggested_questions
             : [
-                `What is ${window.location.hostname} used for?`,
-                `What kind of usage does ${window.location.hostname} have?`,
+                `What is ${CURRENT_DOMAIN} used for?`,
+                `What kind of usage does ${CURRENT_DOMAIN} have?`,
                 `Is it safe to log in or share details here?`
             ];
+
+        const recap = stored.recapStats || { totalScanned: 1, threatsBlocked: 0, piracyFlagged: 0 };
 
         sidebar.innerHTML = `
             <div class="parry-sidebar-header">
@@ -256,7 +376,7 @@ function renderParryAIToast(response) {
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00f0ff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                     </svg>
-                    AI Analysis
+                    Parry AI Shield
                 </h2>
                 <button class="parry-sidebar-close" id="parry-sidebar-close" title="Close Sidebar">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -264,7 +384,8 @@ function renderParryAIToast(response) {
             </div>
             
             <div class="parry-sidebar-tabs">
-                <div class="parry-tab active" id="tab-chat">CHAT</div>
+                <div class="parry-tab active" id="tab-chat">CHAT & WHY</div>
+                <div class="parry-tab" id="tab-recap">SAFETY RECAP</div>
                 <div class="parry-tab" id="tab-history">HISTORY</div>
                 <div class="parry-tab" id="tab-settings">SETTINGS</div>
             </div>
@@ -272,10 +393,18 @@ function renderParryAIToast(response) {
             <!-- CHAT VIEW -->
             <div class="parry-sidebar-view active" id="view-chat">
                 <div class="parry-chat-area" id="parry-chat-area">
-                    <div class="parry-chat-bubble ai">
-                        <strong>Parry AI:</strong><br><br>
+                    <div class="parry-chat-bubble ai" style="background: rgba(0, 240, 255, 0.1); border: 1px solid rgba(0, 240, 255, 0.3); align-self: flex-start; padding: 12px; border-radius: 4px; border-top-left-radius: 0;">
+                        <strong>Parry AI Analysis:</strong><br><br>
                         ${response.why_explainer}<br><br>
-                        <em>How can I assist you with this site?</em>
+                        ${response.legal_alternatives && response.legal_alternatives.length > 0 ? `
+                            <div class="parry-legal-alternatives">
+                                <strong>Vetted Legal Alternatives:</strong>
+                                <ul>
+                                    ${response.legal_alternatives.map(alt => `<li>${alt}</li>`).join('')}
+                                </ul>
+                            </div><br>
+                        ` : ''}
+                        <em>Ask me anything about ${CURRENT_DOMAIN}:</em>
                     </div>
                 </div>
 
@@ -290,15 +419,42 @@ function renderParryAIToast(response) {
                 </div>
             </div>
             
+            <!-- RECAP DASHBOARD VIEW -->
+            <div class="parry-sidebar-view" id="view-recap">
+                <div style="font-weight: 700; color: #00f0ff; margin-bottom: 12px; font-size: 14px; font-family: 'Orbitron', sans-serif;">
+                    🛡️ WEEKLY SECURITY RECAP
+                </div>
+                <div class="parry-recap-grid">
+                    <div class="parry-recap-box">
+                        <div class="parry-recap-num">${recap.totalScanned || 0}</div>
+                        <div class="parry-recap-label">Sites Scanned</div>
+                    </div>
+                    <div class="parry-recap-box">
+                        <div class="parry-recap-num" style="color: #ff0055;">${recap.threatsBlocked || 0}</div>
+                        <div class="parry-recap-label">Threats Blocked</div>
+                    </div>
+                    <div class="parry-recap-box">
+                        <div class="parry-recap-num" style="color: #ffaa00;">${recap.piracyFlagged || 0}</div>
+                        <div class="parry-recap-label">Piracy / Gray Area</div>
+                    </div>
+                </div>
+
+                <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(0,240,255,0.2); border-radius: 8px; padding: 14px; font-size: 12px; line-height: 1.6;">
+                    <div style="color: #00f0ff; font-weight: 600; margin-bottom: 4px;">CURRENT SESSION RADAR</div>
+                    <div>Domain: <strong>${CURRENT_DOMAIN}</strong></div>
+                    <div>Safe Browsing: <strong>${response.risk_matrix?.safe_browsing || 'clean'}</strong></div>
+                    <div>TLS / Certificate: <strong>${response.risk_matrix?.tls_valid ? 'Valid SSL' : 'Invalid / Missing'}</strong></div>
+                    <div>Legality: <strong>${response.legality_status || 'Legal'}</strong></div>
+                </div>
+            </div>
+
             <!-- HISTORY VIEW -->
             <div class="parry-sidebar-view" id="view-history">
                 <div class="parry-subtabs">
                     <button class="parry-subtab active" id="subtab-sites">INTERCEPTED SITES</button>
                     <button class="parry-subtab" id="subtab-chats">CHAT LOGS</button>
                 </div>
-                <div class="parry-history-list" id="history-content-area">
-                    <!-- Populated dynamically -->
-                </div>
+                <div class="parry-history-list" id="history-content-area"></div>
             </div>
 
             <!-- SETTINGS VIEW -->
@@ -336,6 +492,31 @@ function renderParryAIToast(response) {
                             <span class="parry-slider"></span>
                         </label>
                     </div>
+
+                    <!-- Whitelist Manager -->
+                    <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(0,240,255,0.2); border-radius: 8px; padding: 14px; margin-top: 14px;">
+                        <div style="color: #00f0ff; font-weight: 600; font-size: 13px; margin-bottom: 6px;">CUSTOM WHITELIST</div>
+                        <div style="font-size: 11px; color: #94a3b8; margin-bottom: 10px;">Domains that Parry AI will never intercept:</div>
+                        <div id="parry-whitelist-tags" style="display: flex; flex-wrap: wrap; gap: 6px;">
+                            ${(stored.whitelist && stored.whitelist.length > 0) 
+                                ? stored.whitelist.map(d => `<span class="parry-radar-chip" style="color:#00ffaa;">${d}</span>`).join('') 
+                                : '<span style="color:#64748b; font-size:11px;">No domains whitelisted yet.</span>'}
+                        </div>
+                        <button id="parry-clear-whitelist" style="margin-top: 10px; background: transparent; border: 1px solid #ff0055; color: #ff0055; font-size: 11px; padding: 4px 8px; border-radius: 4px; cursor: pointer;">
+                            Clear Whitelist
+                        </button>
+                    </div>
+
+                    <!-- Cache & Testing Manager -->
+                    <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,170,0,0.3); border-radius: 8px; padding: 14px; margin-top: 14px;">
+                        <div style="color: #ffaa00; font-weight: 600; font-size: 13px; margin-bottom: 6px;">TESTING & CACHE MANAGEMENT</div>
+                        <div style="font-size: 11px; color: #94a3b8; margin-bottom: 10px;">Erase backend verdict cache & local storage for instant re-analysis:</div>
+                        <button id="parry-clear-cache" style="background: rgba(255,170,0,0.15); border: 1px solid #ffaa00; color: #ffaa00; font-size: 11px; font-weight: 600; padding: 6px 12px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                            Erase Cache & Reset History
+                        </button>
+                        <div id="parry-cache-status" style="font-size: 10px; color: #00ffaa; margin-top: 6px; display: none;"></div>
+                    </div>
                 </div>
             </div>
             
@@ -351,27 +532,42 @@ function renderParryAIToast(response) {
             });
             
             const tabChat = sidebar.querySelector('#tab-chat');
+            const tabRecap = sidebar.querySelector('#tab-recap');
             const tabHistory = sidebar.querySelector('#tab-history');
             const tabSettings = sidebar.querySelector('#tab-settings');
+
             const viewChat = sidebar.querySelector('#view-chat');
+            const viewRecap = sidebar.querySelector('#view-recap');
             const viewHistory = sidebar.querySelector('#view-history');
             const viewSettings = sidebar.querySelector('#view-settings');
             const chatInputContainer = sidebar.querySelector('#chat-input-container');
 
             function switchMainTab(activeTab, activeView, showInput) {
-                [tabChat, tabHistory, tabSettings].forEach(t => t.classList.remove('active'));
-                [viewChat, viewHistory, viewSettings].forEach(v => v.classList.remove('active'));
+                [tabChat, tabRecap, tabHistory, tabSettings].forEach(t => t.classList.remove('active'));
+                [viewChat, viewRecap, viewHistory, viewSettings].forEach(v => v.classList.remove('active'));
                 activeTab.classList.add('active');
                 activeView.classList.add('active');
                 chatInputContainer.style.display = showInput ? 'flex' : 'none';
             }
         
             tabChat.addEventListener('click', () => switchMainTab(tabChat, viewChat, true));
+            tabRecap.addEventListener('click', () => switchMainTab(tabRecap, viewRecap, false));
             tabHistory.addEventListener('click', () => {
                 switchMainTab(tabHistory, viewHistory, false);
                 loadHistoryView('sites');
             });
             tabSettings.addEventListener('click', () => switchMainTab(tabSettings, viewSettings, false));
+
+            // Whitelist clear listener
+            const clearWhitelistBtn = sidebar.querySelector('#parry-clear-whitelist');
+            if (clearWhitelistBtn) {
+                clearWhitelistBtn.addEventListener('click', () => {
+                    chrome.storage.local.set({ whitelist: [] }, () => {
+                        const tagsContainer = sidebar.querySelector('#parry-whitelist-tags');
+                        if (tagsContainer) tagsContainer.innerHTML = '<span style="color:#64748b; font-size:11px;">No domains whitelisted yet.</span>';
+                    });
+                });
+            }
 
             // Sub-tabs in History View
             const subtabSites = sidebar.querySelector('#subtab-sites');
@@ -389,7 +585,7 @@ function renderParryAIToast(response) {
                             historyContentArea.innerHTML = res.history.map(item => `
                                 <div class="parry-history-item ${item.verdict}">
                                     <div class="parry-history-domain">${item.domain}</div>
-                                    <div class="parry-history-choice">Verdict: <strong>${item.verdict}</strong> | Action: ${item.choice}</div>
+                                    <div class="parry-history-choice">Verdict: <strong>${item.verdict}</strong> (${item.legality || 'Legal'}) | Action: ${item.choice}</div>
                                     <div style="font-size:11px; color:#94a3b8; margin-top:4px;">${new Date(item.timestamp).toLocaleTimeString()}</div>
                                 </div>
                             `).join('');
@@ -429,41 +625,114 @@ function renderParryAIToast(response) {
             settingSilence.addEventListener('change', () => {
                 chrome.storage.local.set({ neverShowSafe: settingSilence.checked });
             });
+
+            // Erase Cache listener
+            const clearCacheBtn = sidebar.querySelector('#parry-clear-cache');
+            const cacheStatus = sidebar.querySelector('#parry-cache-status');
+            if (clearCacheBtn) {
+                clearCacheBtn.addEventListener('click', () => {
+                    clearCacheBtn.disabled = true;
+                    clearCacheBtn.style.opacity = '0.5';
+                    if (cacheStatus) {
+                        cacheStatus.style.display = 'block';
+                        cacheStatus.style.color = '#00f0ff';
+                        cacheStatus.textContent = 'Erasing cache & resetting history...';
+                    }
+
+                    chrome.runtime.sendMessage({ action: "clear_cache" }, (res) => {
+                        chrome.storage.local.set({ history: [], chatHistory: [] }, () => {
+                            clearCacheBtn.disabled = false;
+                            clearCacheBtn.style.opacity = '1.0';
+                            if (cacheStatus) {
+                                cacheStatus.style.color = '#00ffaa';
+                                cacheStatus.textContent = '✓ Cache cleared and local history reset successfully!';
+                                setTimeout(() => {
+                                    if (cacheStatus) cacheStatus.style.display = 'none';
+                                }, 3500);
+                            }
+                            // Refresh history view if visible
+                            loadHistoryView('sites');
+                        });
+                    });
+                });
+            }
         
             const sendBtn = sidebar.querySelector('#parry-chat-send');
             const chatInput = sidebar.querySelector('#parry-chat-input');
             const chatArea = sidebar.querySelector('#parry-chat-area');
             
+            const streamChatText = (containerElement, fullText, onComplete) => {
+                const words = fullText.split(' ');
+                let currentIndex = 0;
+                containerElement.innerHTML = `
+                    <div class="parry-bubble-header">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                        Parry AI
+                    </div>
+                    <span class="parry-bubble-text"></span><span class="parry-stream-cursor"></span>
+                `;
+                const textSpan = containerElement.querySelector('.parry-bubble-text');
+                const cursor = containerElement.querySelector('.parry-stream-cursor');
+
+                function streamNextWord() {
+                    if (currentIndex < words.length) {
+                        // Append 1-2 words per frame for an organic, responsive flow
+                        const chunk = words.slice(currentIndex, currentIndex + 2).join(' ');
+                        textSpan.textContent += (currentIndex === 0 ? '' : ' ') + chunk;
+                        currentIndex += 2;
+                        chatArea.scrollTop = chatArea.scrollHeight;
+                        setTimeout(streamNextWord, 28);
+                    } else {
+                        if (cursor) cursor.remove();
+                        if (onComplete) onComplete();
+                    }
+                }
+                streamNextWord();
+            };
+
             const submitQuestion = (queryText) => {
                 const text = (queryText || chatInput.value).trim();
                 if (!text) return;
                 
                 const userMsg = document.createElement('div');
                 userMsg.className = 'parry-chat-bubble user';
-                userMsg.innerHTML = `<strong>You:</strong><br><br>${text}`;
+                userMsg.innerHTML = `
+                    <div class="parry-bubble-header">You</div>
+                    <div class="parry-bubble-text">${text}</div>
+                `;
                 chatArea.appendChild(userMsg);
                 chatInput.value = '';
                 chatArea.scrollTop = chatArea.scrollHeight;
 
-                saveChatEntry('You', text, window.location.hostname);
+                saveChatEntry('You', text, CURRENT_DOMAIN);
                 
+                sendBtn.disabled = true;
                 const typingMsg = document.createElement('div');
                 typingMsg.className = 'parry-chat-bubble ai';
-                typingMsg.innerHTML = `<strong>Parry AI:</strong><br><br><em>Analyzing...</em>`;
+                typingMsg.innerHTML = `
+                    <div class="parry-bubble-header">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                        Parry AI
+                    </div>
+                    <span class="parry-bubble-text" style="color:#94a3b8; font-style: italic;">Analyzing...</span>
+                `;
                 chatArea.appendChild(typingMsg);
                 chatArea.scrollTop = chatArea.scrollHeight;
                 
                 chrome.runtime.sendMessage({
                     action: "chat_ai", 
                     text: text, 
-                    domain: window.location.hostname
+                    domain: CURRENT_DOMAIN
                 }, (chatResponse) => {
-                    const aiReply = (chatResponse && chatResponse.reply) 
+                    let aiReply = (chatResponse && chatResponse.reply) 
                         ? chatResponse.reply 
                         : "Sorry, I couldn't connect to the Parry AI server to answer your question.";
-                    typingMsg.innerHTML = `<strong>Parry AI:</strong><br><br>${aiReply}`;
-                    saveChatEntry('Parry AI', aiReply, window.location.hostname);
-                    chatArea.scrollTop = chatArea.scrollHeight;
+                    aiReply = aiReply.replace(/\*\*/g, '').replace(/__/g, '');
+
+                    streamChatText(typingMsg, aiReply, () => {
+                        sendBtn.disabled = false;
+                        saveChatEntry('Parry AI', aiReply, CURRENT_DOMAIN);
+                    });
                 });
             };
 
@@ -480,7 +749,6 @@ function renderParryAIToast(response) {
                 if (e.key === 'Enter') submitQuestion();
             });
             
-            // Show sidebar
             sidebar.offsetHeight;
             sidebar.classList.add('show');
         });
@@ -519,6 +787,164 @@ function renderParryAIToast(response) {
             if (sidebar) sidebar.remove();
         }, 400); 
     }
+}
+
+// 3. Privacy & Exfiltration Radar Detection
+function initPrivacyRadar() {
+    const scripts = Array.from(document.querySelectorAll('script[src]'));
+    let thirdPartyScripts = 0;
+    let trackers = 0;
+
+    const knownTrackers = ["google-analytics", "doubleclick", "facebook.net", "segment", "hotjar", "criteo", "mixpanel", "clarity.ms", "amplitude"];
+
+    scripts.forEach(s => {
+        try {
+            const srcUrl = new URL(s.src, window.location.href);
+            if (srcUrl.hostname !== window.location.hostname) {
+                thirdPartyScripts++;
+                if (knownTrackers.some(t => srcUrl.hostname.includes(t) || srcUrl.pathname.includes(t))) {
+                    trackers++;
+                }
+            }
+        } catch (e) {}
+    });
+
+    const forms = document.querySelectorAll('input[type="password"], input[type="email"], input[name*="card"]').length;
+    let risk = "Low";
+    if (trackers >= 4 || (forms > 0 && thirdPartyScripts > 8)) {
+        risk = "High";
+    } else if (trackers >= 1 || thirdPartyScripts >= 3) {
+        risk = "Moderate";
+    }
+
+    window._parryPrivacyStats = {
+        trackers,
+        thirdPartyScripts,
+        forms,
+        risk
+    };
+}
+
+// 4. Download Guard & Sandbox Checker
+function initDownloadGuard() {
+    const dangerousExtensions = ['.exe', '.dmg', '.iso', '.zip', '.apk', '.bat', '.cmd', '.scr', '.vbs', '.msi'];
+
+    document.addEventListener('click', (e) => {
+        const link = e.target.closest('a');
+        if (!link || !link.href) return;
+
+        const href = link.href.toLowerCase();
+        const isDangerousDownload = dangerousExtensions.some(ext => href.split('?')[0].endsWith(ext));
+
+        if (isDangerousDownload) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            showDownloadGuardModal(link.href);
+        }
+    }, true);
+}
+
+function showDownloadGuardModal(downloadUrl) {
+    if (document.getElementById('parry-download-guard')) return;
+
+    const toast = document.createElement('div');
+    toast.id = 'parry-download-guard';
+
+    const filename = downloadUrl.split('/').pop().split('?')[0] || "Executable file";
+
+    toast.innerHTML = `
+        <div class="parry-download-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            DOWNLOAD SANDBOX GUARD
+        </div>
+        <div class="parry-download-body">
+            Parry AI intercepted an executable/archive download: <strong>${filename}</strong>.<br>
+            Files from this domain should be treated with caution.
+        </div>
+        <div class="parry-download-actions">
+            <button id="parry-cancel-dl" class="parry-btn parry-btn-primary" style="padding: 6px 12px; font-size: 11px;">Cancel</button>
+            <button id="parry-proceed-dl" class="parry-btn parry-btn-danger" style="padding: 6px 12px; font-size: 11px;">Proceed Anyway</button>
+        </div>
+    `;
+
+    injectWhenReady(toast);
+
+    toast.querySelector('#parry-cancel-dl').addEventListener('click', () => {
+        toast.remove();
+    });
+
+    toast.querySelector('#parry-proceed-dl').addEventListener('click', () => {
+        toast.remove();
+        window.location.href = downloadUrl;
+    });
+}
+
+// 5. Zero-Click Google Search SERP Badging
+function initGoogleSerpBadging() {
+    const isGoogleSearch = window.location.hostname.includes("google.") && window.location.pathname.startsWith("/search");
+    if (!isGoogleSearch) return;
+
+    function scanSerpLinks() {
+        const searchAnchors = Array.from(document.querySelectorAll('a[jsname="UWckNb"], div.yuRUbf > a, div.MjjYud a[href^="http"]'));
+        if (searchAnchors.length === 0) return;
+
+        const linksToScan = [];
+        const mapAnchorToUrl = new Map();
+
+        searchAnchors.forEach(a => {
+            if (a.getAttribute('data-parry-scanned')) return;
+            const href = a.href;
+            if (!href || href.startsWith("https://www.google.") || href.startsWith("http://localhost")) return;
+
+            a.setAttribute('data-parry-scanned', 'true');
+            linksToScan.push(href);
+            mapAnchorToUrl.set(a, href);
+        });
+
+        if (linksToScan.length === 0) return;
+
+        // Batch Safe Browsing query to preserve API quotas
+        chrome.runtime.sendMessage({
+            action: "batch_safe_browsing",
+            urls: linksToScan.slice(0, 30)
+        }, (res) => {
+            const results = (res && res.results) ? res.results : [];
+            const verdictMap = {};
+            results.forEach(r => {
+                verdictMap[r.url] = r.verdict;
+            });
+
+            mapAnchorToUrl.forEach((url, anchor) => {
+                const verdict = verdictMap[url] || "clean";
+                const badge = document.createElement('span');
+                badge.className = `parry-serp-badge ${verdict === 'clean' ? 'safe' : 'malicious'}`;
+                
+                const isClean = (verdict === 'clean');
+                badge.innerHTML = `
+                    <span class="parry-serp-icon">${isClean ? '🛡️' : '⚠️'}</span>
+                    <span class="parry-serp-text">${isClean ? 'Safe' : 'Threat'}</span>
+                    <span class="parry-serp-source">[Safe Browsing]</span>
+                `;
+                badge.title = `Rating provided by Google Safe Browsing API. Verified by Parry AI.`;
+                
+                // Avoid placing inside complex SVG/flex elements. Target the h3 heading inside the anchor if present
+                const heading = anchor.querySelector('h3') || anchor;
+                if (heading !== anchor) {
+                    heading.appendChild(badge);
+                } else if (anchor.parentElement) {
+                    anchor.insertAdjacentElement('afterend', badge);
+                } else {
+                    anchor.appendChild(badge);
+                }
+            });
+        });
+    }
+
+    // Run on initial load and observe dynamic results
+    setTimeout(scanSerpLinks, 800);
+    const observer = new MutationObserver(() => scanSerpLinks());
+    observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
 }
 
 // Safe Injection Helper

@@ -87,5 +87,69 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
 
         return true;
+    } else if (request.action === "batch_safe_browsing") {
+        fetch(API_URL.replace("/analyze", "/batch-safe-browsing"), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ urls: request.urls })
+        })
+        .then(response => {
+            if (!response.ok) throw new Error("Batch safe browsing failed");
+            return response.json();
+        })
+        .then(data => {
+            sendResponse({ success: true, results: data.results || [] });
+        })
+        .catch(error => {
+            console.error("Batch Safe Browsing Error:", error);
+            sendResponse({ success: false, results: [] });
+        });
+
+        return true;
+    } else if (request.action === "report_verdict") {
+        fetch(API_URL.replace("/analyze", "/report-verdict"), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                url: request.url,
+                domain: request.domain,
+                verdict: request.verdict,
+                report_type: request.report_type || "false_positive",
+                user_comment: request.user_comment || ""
+            })
+        })
+        .then(response => {
+            if (!response.ok) throw new Error("Report failed");
+            return response.json();
+        })
+        .then(data => {
+            sendResponse({ success: true, data: data });
+        })
+        .catch(error => {
+            console.error("Report Error:", error);
+            sendResponse({ success: false });
+        });
+
+        return true;
+    } else if (request.action === "clear_cache") {
+        fetch(API_URL.replace("/analyze", "/cache/clear"), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            sendResponse({ success: true, data: data });
+        })
+        .catch(error => {
+            console.error("Clear Cache Error:", error);
+            sendResponse({ success: false });
+        });
+
+        return true;
     }
 });
+

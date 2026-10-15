@@ -20,6 +20,8 @@ class AnalyzeResponse(BaseModel):
     cached: bool
     analyzed_at: str
     suggested_questions: list[str] = []
+    legality_status: str = "Legal"
+    legal_alternatives: list[str] = []
 
 class ChatRequest(BaseModel):
     message: str
@@ -33,3 +35,22 @@ class QuestionsRequest(BaseModel):
 
 class QuestionsResponse(BaseModel):
     questions: list[str] = []
+
+class BatchSafeBrowsingRequest(BaseModel):
+    urls: list[str]
+
+class BatchSafeBrowsingItem(BaseModel):
+    url: str
+    verdict: str  # "clean" | "malicious" | "unknown"
+    source: str = "Google Safe Browsing"
+
+class BatchSafeBrowsingResponse(BaseModel):
+    results: list[BatchSafeBrowsingItem]
+
+class ReportFalsePositiveRequest(BaseModel):
+    url: str
+    domain: str
+    verdict: str
+    user_comment: Optional[str] = ""
+    report_type: str = "false_positive" # or "false_negative"
+

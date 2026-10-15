@@ -59,6 +59,7 @@ function renderParryAIToast(response) {
             </h2>
             <div style="display: flex; align-items: center; gap: 10px;">
                 <div class="parry-badge ${badgeClass}">${response.verdict}</div>
+                <div class="parry-badge legality-${(response.legality_status || 'Legal').toLowerCase().replace(' ', '-')}">${response.legality_status || 'Legal'}</div>
                 <button class="parry-close-btn" id="parry-modal-close" title="Close Notification">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -155,9 +156,17 @@ function renderParryAIToast(response) {
                     <!-- Chat View -->
                     <div class="parry-sidebar-view active" id="view-chat">
                         <div class="parry-chat-area" id="parry-chat-area">
-                            <div class="parry-chat-bubble ai">
+                            <div class="parry-chat-bubble ai" style="background: rgba(0, 240, 255, 0.1); border: 1px solid rgba(0, 240, 255, 0.3); align-self: flex-start; padding: 12px; border-radius: 4px; border-top-left-radius: 0;">
                                 <strong>Parry AI:</strong><br><br>
                                 ${response.why_explainer}<br><br>
+                                ${response.legal_alternatives && response.legal_alternatives.length > 0 ? `
+                                    <div class="parry-legal-alternatives">
+                                        <strong>Legal Alternatives:</strong>
+                                        <ul>
+                                            ${response.legal_alternatives.map(alt => `<li>${alt}</li>`).join('')}
+                                        </ul>
+                                    </div><br>
+                                ` : ''}
                                 <em>Ask me anything or click a suggested question below:</em>
                             </div>
                         </div>
@@ -216,6 +225,17 @@ function renderParryAIToast(response) {
                                     <input type="checkbox" id="setting-silence-safe" ${silenceSafe ? 'checked' : ''}>
                                     <span class="parry-slider"></span>
                                 </label>
+                            </div>
+
+                            <!-- Testing / Cache Management -->
+                            <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,170,0,0.3); border-radius: 8px; padding: 14px; margin-top: 14px;">
+                                <div style="color: #ffaa00; font-weight: 600; font-size: 13px; margin-bottom: 6px;">TESTING & CACHE MANAGEMENT</div>
+                                <div style="font-size: 11px; color: #94a3b8; margin-bottom: 10px;">Erase backend verdict cache & local storage for instant re-analysis:</div>
+                                <button id="parry-clear-cache" style="background: rgba(255,170,0,0.15); border: 1px solid #ffaa00; color: #ffaa00; font-size: 11px; font-weight: 600; padding: 6px 12px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                    Erase Cache & Reset History
+                                </button>
+                                <div id="parry-cache-status" style="font-size: 10px; color: #00ffaa; margin-top: 6px; display: none;"></div>
                             </div>
                         </div>
                     </div>
@@ -309,19 +329,94 @@ function renderParryAIToast(response) {
                 document.getElementById('setting-silence-safe').addEventListener('change', (e) => {
                     setStored('parry_silence_safe', e.target.checked);
                 });
+
+                // Clear Cache button logic
+                const clearCacheBtn = document.getElementById('parry-clear-cache');
+                const cacheStatus = document.getElementById('parry-cache-status');
+                if (clearCacheBtn) {
+                    clearCacheBtn.addEventListener('click', () => {
+                        clearCacheBtn.disabled = true;
+                        clearCacheBtn.style.opacity = '0.5';
+                        if (cacheStatus) {
+                            cacheStatus.style.display = 'block';
+                            cacheStatus.style.color = '#00f0ff';
+                            cacheStatus.textContent = 'Erasing cache & resetting history...';
+                        }
+                        fetch("http://127.0.0.1:8000/cache/clear", { method: "POST" })
+                            .then(() => {
+                                localStorage.removeItem('parry_history');
+                                localStorage.removeItem('parry_chat_history');
+                                clearCacheBtn.disabled = false;
+                                clearCacheBtn.style.opacity = '1.0';
+                                if (cacheStatus) {
+                                    cacheStatus.style.color = '#00ffaa';
+                                    cacheStatus.textContent = '✓ Cache cleared and local history reset successfully!';
+                                    setTimeout(() => {
+                                        if (cacheStatus) cacheStatus.style.display = 'none';
+                                    }, 3500);
+                                }
+                                loadHistoryView('sites');
+                            })
+                            .catch(() => {
+                                localStorage.removeItem('parry_history');
+                                localStorage.removeItem('parry_chat_history');
+                                clearCacheBtn.disabled = false;
+                                clearCacheBtn.style.opacity = '1.0';
+                                if (cacheStatus) {
+                                    cacheStatus.style.color = '#00ffaa';
+                                    cacheStatus.textContent = '✓ Local cache & history reset!';
+                                    setTimeout(() => {
+                                        if (cacheStatus) cacheStatus.style.display = 'none';
+                                    }, 3500);
+                                }
+                                loadHistoryView('sites');
+                            });
+                    });
+                }
                 
                 // Chat logic
                 const sendBtn = document.getElementById('parry-chat-send');
                 const chatInput = document.getElementById('parry-chat-input');
                 const chatArea = document.getElementById('parry-chat-area');
                 
+                const streamChatText = (containerElement, fullText, onComplete) => {
+                    const words = fullText.split(' ');
+                    let currentIndex = 0;
+                    containerElement.innerHTML = `
+                        <div class="parry-bubble-header">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                            Parry AI
+                        </div>
+                        <span class="parry-bubble-text"></span><span class="parry-stream-cursor"></span>
+                    `;
+                    const textSpan = containerElement.querySelector('.parry-bubble-text');
+                    const cursor = containerElement.querySelector('.parry-stream-cursor');
+
+                    function streamNextWord() {
+                        if (currentIndex < words.length) {
+                            const chunk = words.slice(currentIndex, currentIndex + 2).join(' ');
+                            textSpan.textContent += (currentIndex === 0 ? '' : ' ') + chunk;
+                            currentIndex += 2;
+                            chatArea.scrollTop = chatArea.scrollHeight;
+                            setTimeout(streamNextWord, 28);
+                        } else {
+                            if (cursor) cursor.remove();
+                            if (onComplete) onComplete();
+                        }
+                    }
+                    streamNextWord();
+                };
+
                 const submitQuestion = (queryText) => {
                     const text = (queryText || chatInput.value).trim();
                     if (!text) return;
                     
                     const userMsg = document.createElement('div');
                     userMsg.className = 'parry-chat-bubble user';
-                    userMsg.innerHTML = `<strong>You:</strong><br><br>${text}`;
+                    userMsg.innerHTML = `
+                        <div class="parry-bubble-header">You</div>
+                        <div class="parry-bubble-text">${text}</div>
+                    `;
                     chatArea.appendChild(userMsg);
                     chatInput.value = '';
                     chatArea.scrollTop = chatArea.scrollHeight;
@@ -331,10 +426,16 @@ function renderParryAIToast(response) {
                     chats.unshift({ sender: 'You', text: text, domain: window.location.hostname || "sandbox.local", timestamp: new Date().toISOString() });
                     setStored('parry_chat_history', chats);
                     
-                    // Simulate/Trigger AI response
+                    sendBtn.disabled = true;
                     const typingMsg = document.createElement('div');
                     typingMsg.className = 'parry-chat-bubble ai';
-                    typingMsg.innerHTML = `<strong>Parry AI:</strong><br><br><em>Analyzing...</em>`;
+                    typingMsg.innerHTML = `
+                        <div class="parry-bubble-header">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                            Parry AI
+                        </div>
+                        <span class="parry-bubble-text" style="color:#94a3b8; font-style: italic;">Analyzing...</span>
+                    `;
                     chatArea.appendChild(typingMsg);
                     chatArea.scrollTop = chatArea.scrollHeight;
 
@@ -345,18 +446,20 @@ function renderParryAIToast(response) {
                     })
                     .then(r => r.json())
                     .then(d => {
-                        const reply = d.reply || "Analysis complete.";
-                        typingMsg.innerHTML = `<strong>Parry AI:</strong><br><br>${reply}`;
-                        chats.unshift({ sender: 'Parry AI', text: reply, domain: window.location.hostname || "sandbox.local", timestamp: new Date().toISOString() });
-                        setStored('parry_chat_history', chats);
-                        chatArea.scrollTop = chatArea.scrollHeight;
+                        let reply = (d.reply || "Analysis complete.").replace(/\*\*/g, '').replace(/__/g, '');
+                        streamChatText(typingMsg, reply, () => {
+                            sendBtn.disabled = false;
+                            chats.unshift({ sender: 'Parry AI', text: reply, domain: window.location.hostname || "sandbox.local", timestamp: new Date().toISOString() });
+                            setStored('parry_chat_history', chats);
+                        });
                     })
                     .catch(() => {
                         const fallback = `Parry AI analysis for "${text}": This site appears to operate within expected parameters. Always verify login fields.`;
-                        typingMsg.innerHTML = `<strong>Parry AI:</strong><br><br>${fallback}`;
-                        chats.unshift({ sender: 'Parry AI', text: fallback, domain: window.location.hostname || "sandbox.local", timestamp: new Date().toISOString() });
-                        setStored('parry_chat_history', chats);
-                        chatArea.scrollTop = chatArea.scrollHeight;
+                        streamChatText(typingMsg, fallback, () => {
+                            sendBtn.disabled = false;
+                            chats.unshift({ sender: 'Parry AI', text: fallback, domain: window.location.hostname || "sandbox.local", timestamp: new Date().toISOString() });
+                            setStored('parry_chat_history', chats);
+                        });
                     });
                 };
 
