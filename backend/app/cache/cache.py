@@ -21,7 +21,10 @@ class VerdictCache:
                     timestamp TEXT,
                     suggested_questions TEXT,
                     legality_status TEXT,
-                    legal_alternatives TEXT
+                    legal_alternatives TEXT,
+                    privacy_grade TEXT,
+                    privacy_score REAL,
+                    privacy_details TEXT
                 )
             """)
             await db.execute("""
@@ -48,6 +51,18 @@ class VerdictCache:
                 await db.execute("ALTER TABLE verdicts ADD COLUMN legal_alternatives TEXT")
             except Exception:
                 pass
+            try:
+                await db.execute("ALTER TABLE verdicts ADD COLUMN privacy_grade TEXT DEFAULT 'A'")
+            except Exception:
+                pass
+            try:
+                await db.execute("ALTER TABLE verdicts ADD COLUMN privacy_score REAL DEFAULT 1.0")
+            except Exception:
+                pass
+            try:
+                await db.execute("ALTER TABLE verdicts ADD COLUMN privacy_details TEXT DEFAULT ''")
+            except Exception:
+                pass
             # Create index on timestamp for fast eviction
             await db.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON verdicts (timestamp)")
             await db.commit()
@@ -68,13 +83,13 @@ class VerdictCache:
         Get a cached verdict if it exists and hasn't expired.
         """
         async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute("SELECT verdict, risk_score, risk_matrix, why_explainer, timestamp, suggested_questions, legality_status, legal_alternatives FROM verdicts WHERE domain = ?", (domain,)) as cursor:
+            async with db.execute("SELECT verdict, risk_score, risk_matrix, why_explainer, timestamp, suggested_questions, legality_status, legal_alternatives, privacy_grade, privacy_score, privacy_details FROM verdicts WHERE domain = ?", (domain,)) as cursor:
                 row = await cursor.fetchone()
                 
                 if not row:
                     return None
                     
-                verdict, risk_score, risk_matrix_str, why_explainer, timestamp_str, suggested_questions_str, legality_status, legal_alts_str = row
+                verdict, risk_score, risk_matrix_str, why_explainer, timestamp_str, suggested_questions_str, legality_status, legal_alts_str, privacy_grade, privacy_score, privacy_details = row
                 
                 # Check TTL
                 analyzed_at = datetime.fromisoformat(timestamp_str)
@@ -111,7 +126,10 @@ class VerdictCache:
                     analyzed_at=timestamp_str,
                     suggested_questions=suggested_questions,
                     legality_status=legality_status or "Legal",
-                    legal_alternatives=legal_alternatives
+                    legal_alternatives=legal_alternatives,
+                    privacy_grade=privacy_grade or "A",
+                    privacy_score=privacy_score if privacy_score is not None else 1.0,
+                    privacy_details=privacy_details or "Minimal trackers detected"
                 )
 
     async def put(self, domain: str, response: AnalyzeResponse):
@@ -126,9 +144,9 @@ class VerdictCache:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 INSERT OR REPLACE INTO verdicts 
-                (domain, verdict, risk_score, risk_matrix, why_explainer, timestamp, suggested_questions, legality_status, legal_alternatives) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (domain, response.verdict, response.risk_score, risk_matrix_str, response.why_explainer, timestamp, suggested_questions_str, response.legality_status, legal_alts_str))
+                (domain, verdict, risk_score, risk_matrix, why_explainer, timestamp, suggested_questions, legality_status, legal_alternatives, privacy_grade, privacy_score, privacy_details) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (domain, response.verdict, response.risk_score, risk_matrix_str, response.why_explainer, timestamp, suggested_questions_str, response.legality_status, legal_alts_str, response.privacy_grade, response.privacy_score, response.privacy_details))
             await db.commit()
             
         # Evict old entries if we exceed cap (background/async)

@@ -9,6 +9,9 @@ class RiskMatrix(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     url: str
+    trackers_count: Optional[int] = 0
+    third_party_scripts_count: Optional[int] = 0
+    has_input_forms: Optional[bool] = False
 
 class AnalyzeResponse(BaseModel):
     url: str
@@ -22,6 +25,9 @@ class AnalyzeResponse(BaseModel):
     suggested_questions: list[str] = []
     legality_status: str = "Legal"
     legal_alternatives: list[str] = []
+    privacy_grade: str = "A"      # "A" | "B" | "C" | "D" | "F"
+    privacy_score: float = 1.0     # 0.0 (Worst) to 1.0 (Best)
+    privacy_details: str = "Minimal trackers detected"
 
 class ChatRequest(BaseModel):
     message: str

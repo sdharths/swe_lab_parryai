@@ -32,7 +32,14 @@ chrome.storage.local.get({ whitelist: [] }, (stored) => {
         return;
     }
 
-    chrome.runtime.sendMessage({ action: "analyze_url", url: window.location.href }, (response) => {
+    const privacyStats = window._parryPrivacyStats || { trackers: 0, thirdPartyScripts: 0, forms: 0, risk: "Low" };
+    chrome.runtime.sendMessage({
+        action: "analyze_url",
+        url: window.location.href,
+        trackers_count: privacyStats.trackers || 0,
+        third_party_scripts_count: privacyStats.thirdPartyScripts || 0,
+        has_input_forms: (privacyStats.forms || 0) > 0
+    }, (response) => {
         if (response && response.data) {
             checkSettingsAndRender(response.data);
         }
@@ -43,7 +50,8 @@ function checkSettingsAndRender(apiResponse) {
     chrome.storage.local.get({
         neverShowSafe: false,
         interceptHttps: true,
-        notifyHttps: true
+        notifyHttps: true,
+        compactMiniPopup: false
     }, (settings) => {
         const isHttps = window.location.protocol === 'https:';
 
@@ -65,7 +73,13 @@ function checkSettingsAndRender(apiResponse) {
             return;
         }
 
-        renderParryAIToast(apiResponse);
+        // If user opted into Compact Mini Popup and site is NOT malicious (or user configured mini mode)
+        const isDangerous = (apiResponse.verdict === 'malicious');
+        if (settings.compactMiniPopup && !isDangerous) {
+            renderMiniParryPill(apiResponse);
+        } else {
+            renderParryAIToast(apiResponse);
+        }
     });
 }
 
@@ -80,6 +94,56 @@ function calculateThreatTheme(verdict, legality) {
         return "threat-theme-medium";
     }
     return "threat-theme-low";
+}
+
+function renderMiniParryPill(response) {
+    if (document.getElementById('parry-ai-mini-container') || document.getElementById('parry-ai-container')) return;
+
+    const mini = document.createElement('div');
+    mini.id = 'parry-ai-mini-container';
+
+    let badgeClass = "safe";
+    if (response.verdict === "malicious") badgeClass = "malicious";
+    else if (response.verdict === "suspicious") badgeClass = "suspicious";
+
+    const privGrade = response.privacy_grade || "A";
+    const legality = response.legality_status || "Legal";
+
+    mini.innerHTML = `
+        <div class="parry-mini-title">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#00f0ff" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            PARRY
+        </div>
+        <div class="parry-mini-badges">
+            <span class="parry-mini-badge ${badgeClass}">${response.verdict}</span>
+            <span class="parry-mini-badge legality-${legality.toLowerCase().replace(' ', '-')}">${legality}</span>
+            <span class="parry-mini-badge privacy-${privGrade.toLowerCase()}">P-${privGrade}</span>
+        </div>
+        <button class="parry-mini-close" id="parry-mini-close" title="Dismiss">&times;</button>
+    `;
+
+    injectWhenReady(mini, () => {
+        mini.offsetHeight;
+        mini.classList.add('show');
+    });
+
+    const closeBtn = mini.querySelector('#parry-mini-close');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            mini.classList.remove('show');
+            setTimeout(() => mini.remove(), 250);
+        });
+    }
+
+    // Clicking anywhere else on the pill expands into the full toast & dashboard
+    mini.addEventListener('click', () => {
+        mini.classList.remove('show');
+        setTimeout(() => {
+            mini.remove();
+            renderParryAIToast(response);
+        }, 200);
+    });
 }
 
 function renderParryAIToast(response) {
@@ -133,16 +197,17 @@ function renderParryAIToast(response) {
     container.innerHTML = `
         <div class="parry-header">
             <h2 class="parry-title">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00f0ff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#00f0ff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
                 </svg>
                 PARRY AI
             </h2>
-            <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: nowrap;">
                 <div class="parry-badge ${badgeClass}">${response.verdict}</div>
                 <div class="parry-badge legality-${(response.legality_status || 'Legal').toLowerCase().replace(' ', '-')}">${response.legality_status || 'Legal'}</div>
+                <div class="parry-badge privacy-${(response.privacy_grade || 'A').toLowerCase()}">P:${response.privacy_grade || 'A'}</div>
                 <button class="parry-close-btn" id="parry-modal-close" title="Close Notification">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
                         <line x1="6" y1="6" x2="18" y2="18"></line>
                     </svg>
@@ -169,8 +234,11 @@ function renderParryAIToast(response) {
         <!-- Privacy & Exfiltration Radar Box -->
         <div class="parry-radar-card">
             <div class="parry-radar-header">
-                <span>📡 PRIVACY RADAR</span>
+                <span>📡 PRIVACY GRADE: <strong style="color: #00f0ff;">${response.privacy_grade || 'A'}</strong> (${Math.round((response.privacy_score !== undefined ? response.privacy_score : 1.0) * 100)}%)</span>
                 <span style="color: ${privacyStats.risk === 'High' ? '#ff0055' : (privacyStats.risk === 'Moderate' ? '#ffaa00' : '#00ffaa')}">${privacyStats.risk} Exfil Risk</span>
+            </div>
+            <div style="font-size: 11px; color: #cbd5e1; margin-bottom: 8px;">
+                ${response.privacy_details || 'Standard telemetry profile.'}
             </div>
             <div class="parry-radar-stats">
                 <span class="parry-radar-chip">${privacyStats.trackers} Trackers</span>
@@ -211,12 +279,19 @@ function renderParryAIToast(response) {
     injectWhenReady(container, () => {
         container.offsetHeight; 
         container.classList.add('show');
+
+        // Force-enable all buttons so host-page CSS can't override them
+        container.querySelectorAll('button').forEach(btn => {
+            btn.style.setProperty('pointer-events', 'all', 'important');
+            btn.style.setProperty('cursor', 'pointer', 'important');
+        });
     });
 
     // Top Right X Button Listener
     const modalCloseBtn = container.querySelector('#parry-modal-close');
     if (modalCloseBtn) {
-        modalCloseBtn.addEventListener('click', () => {
+        modalCloseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             logHistory('Dismissed via X');
             if (isDangerous && document.body) {
                 document.body.style.overflow = '';
@@ -228,7 +303,8 @@ function renderParryAIToast(response) {
     // Whitelist Domain Button
     const whitelistBtn = container.querySelector('#parry-btn-whitelist');
     if (whitelistBtn) {
-        whitelistBtn.addEventListener('click', () => {
+        whitelistBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             chrome.storage.local.get({ whitelist: [] }, (res) => {
                 const list = res.whitelist || [];
                 if (!list.includes(CURRENT_DOMAIN)) {
@@ -246,7 +322,8 @@ function renderParryAIToast(response) {
     // False Positive Reporting Button
     const reportBtn = container.querySelector('#parry-btn-report-fp');
     if (reportBtn) {
-        reportBtn.addEventListener('click', () => {
+        reportBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             const reason = prompt(`Report verdict error for ${CURRENT_DOMAIN}:\nWhy is this rating inaccurate? (Optional)`);
             if (reason !== null) {
                 chrome.runtime.sendMessage({
@@ -328,15 +405,16 @@ function renderParryAIToast(response) {
     }
     
     if (upBtn && downBtn) {
-        upBtn.addEventListener('click', () => handleFeedback(true));
-        downBtn.addEventListener('click', () => handleFeedback(false));
+        upBtn.addEventListener('click', (e) => { e.stopPropagation(); handleFeedback(true); });
+        downBtn.addEventListener('click', (e) => { e.stopPropagation(); handleFeedback(false); });
     }
 
     // Sidebar Logic
     let sidebar = null;
     const whyBtn = container.querySelector('#parry-ai-why-btn');
     if (whyBtn) {
-        whyBtn.addEventListener('click', () => {
+        whyBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             if (!sidebar) {
                 sidebar = document.createElement('div');
                 sidebar.id = 'parry-ai-sidebar';
@@ -493,6 +571,50 @@ function renderParryAIToast(response) {
                         </label>
                     </div>
 
+                    <div class="parry-setting-card">
+                        <div class="parry-setting-info">
+                            <div class="parry-setting-title">Compact Mini Popup Mode</div>
+                            <div class="parry-setting-desc">Display a small, unobtrusive floating pill in the corner. Clicking it expands into the full dashboard & chatbot.</div>
+                        </div>
+                        <label class="parry-switch">
+                            <input type="checkbox" id="setting-compact-mini" ${stored.compactMiniPopup ? 'checked' : ''}>
+                            <span class="parry-slider"></span>
+                        </label>
+                    </div>
+
+                    <!-- Faculty Heuristic Formula Reference Card -->
+                    <div class="parry-formula-card">
+                        <div class="parry-formula-title">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#00f0ff" stroke-width="2.2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                            ACADEMIC HEURISTIC EVALUATION FORMULA
+                        </div>
+                        <div style="font-size: 11px; color: #94a3b8; margin-bottom: 6px;">
+                            Multi-source weighted threat risk score formulation:
+                        </div>
+                        <div class="parry-formula-box">
+Score = clamp[0.0, 1.0](
+  + 0.40 &times; 𝕀(Typosquatting)
+  + 0.50 &times; 𝕀(Homoglyphs/IDN)
+  + 0.80 &times; 𝕀(GoogleSafeBrowsing == Malicious)
+  + 0.30 &times; 𝕀(Trustpilot == Bad)
+  - 0.20 &times; 𝕀(Trustpilot == Good)
+  + 0.20 &times; 𝕀(TLS_Valid == False)
+)
+                        </div>
+                        <div class="parry-formula-box" style="color: #4ade80; border-color: rgba(0,255,170,0.4);">
+Privacy = clamp[0.0, 1.0](
+  1.0 - (0.15 &times; N_trackers) - (0.04 &times; N_3rdPartyScripts)
+      - (0.20 &times; 𝕀(HasCredentials & N_trackers &ge; 3))
+)
+                        </div>
+                        <div class="parry-formula-breakdown">
+                            <div><span class="parry-formula-tag parry-tag-heur">Heuristics</span> Levenshtein string distance & Unicode homoglyphs</div>
+                            <div><span class="parry-formula-tag parry-tag-sensor">Sensor Fusion</span> Google Safe Browsing v4 + SerpApi Trustpilot + TLS Handshake</div>
+                            <div><span class="parry-formula-tag parry-tag-privacy">Privacy</span> Telemetry tracking ratio, credential exposure, and telemetry density</div>
+                            <div style="margin-top: 4px; color: #cbd5e1;">Thresholds: <strong>&ge;0.70</strong> Malicious | <strong>&ge;0.40</strong> Suspicious | <strong>&le;0.20</strong> Safe</div>
+                        </div>
+                    </div>
+
                     <!-- Whitelist Manager -->
                     <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(0,240,255,0.2); border-radius: 8px; padding: 14px; margin-top: 14px;">
                         <div style="color: #00f0ff; font-weight: 600; font-size: 13px; margin-bottom: 6px;">CUSTOM WHITELIST</div>
@@ -527,7 +649,14 @@ function renderParryAIToast(response) {
         `;
         
         injectWhenReady(sidebar, () => {
-            sidebar.querySelector('#parry-sidebar-close').addEventListener('click', () => {
+            // Force-enable all buttons in the sidebar
+            sidebar.querySelectorAll('button').forEach(btn => {
+                btn.style.setProperty('pointer-events', 'all', 'important');
+                btn.style.setProperty('cursor', 'pointer', 'important');
+            });
+
+            sidebar.querySelector('#parry-sidebar-close').addEventListener('click', (e) => {
+                e.stopPropagation();
                 sidebar.classList.remove('show');
             });
             
@@ -625,6 +754,13 @@ function renderParryAIToast(response) {
             settingSilence.addEventListener('change', () => {
                 chrome.storage.local.set({ neverShowSafe: settingSilence.checked });
             });
+
+            const settingCompactMini = sidebar.querySelector('#setting-compact-mini');
+            if (settingCompactMini) {
+                settingCompactMini.addEventListener('change', () => {
+                    chrome.storage.local.set({ compactMiniPopup: settingCompactMini.checked });
+                });
+            }
 
             // Erase Cache listener
             const clearCacheBtn = sidebar.querySelector('#parry-clear-cache');
@@ -754,7 +890,8 @@ function renderParryAIToast(response) {
         });
     }
 
-    container.querySelector('#parry-safe-btn').addEventListener('click', () => {
+    container.querySelector('#parry-safe-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
         if (!isDangerous) {
             const neverShow = container.querySelector('#parry-never-show')?.checked;
             if (neverShow) {
@@ -769,7 +906,8 @@ function renderParryAIToast(response) {
 
     const ignoreBtn = container.querySelector('#parry-ignore-btn');
     if (ignoreBtn) {
-        ignoreBtn.addEventListener('click', () => {
+        ignoreBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             logHistory('Ignored Blockade');
             document.body.style.overflow = '';
             closeParryUI();

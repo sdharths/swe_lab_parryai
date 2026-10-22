@@ -27,10 +27,10 @@
     /* Default position for 'safe' toast (top right) */
     top: 20px;
     right: 20px;
-    width: 420px;
-    max-width: 90vw;
+    width: 480px;
+    max-width: calc(100vw - 16px);
     z-index: 2147483647; /* Maximum z-index to stay on top of everything */
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
     
     /* Pinkish purple background with a smooth gradient */
     background: linear-gradient(145deg, #b026ff 0%, #8b25d2 60%);
@@ -51,6 +51,12 @@
     transform: translateX(120%);
     opacity: 0;
     transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.4s ease;
+
+    /* Isolate from host page styles */
+    pointer-events: all !important;
+    user-select: none;
+    line-height: normal;
+    text-align: left;
 }
 
 /* When the container is acting as a full-screen blocker */
@@ -78,11 +84,13 @@
     margin-bottom: 16px;
     border-bottom: 1px solid rgba(0, 240, 255, 0.3);
     padding-bottom: 12px;
+    gap: 8px;
+    flex-wrap: nowrap;
 }
 
 .parry-title {
     font-family: 'Orbitron', sans-serif;
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 700;
     margin: 0;
     letter-spacing: 1px;
@@ -90,18 +98,23 @@
     text-shadow: 0 0 8px rgba(0, 240, 255, 0.8);
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 /* Verdict Badge */
 .parry-badge {
-    padding: 4px 10px;
+    padding: 4px 8px;
     border-radius: 4px;
-    font-size: 14px;
-    font-weight: 900;
+    font-size: 11px;
+    font-weight: 700;
     font-family: 'Orbitron', sans-serif;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
     text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+    display: inline-block;
 }
 
 .parry-badge.malicious {
@@ -137,6 +150,28 @@
 
 .parry-badge.legality-illegal {
     background-color: transparent;
+    color: #ff0055;
+    border: 1px solid #ff0055;
+}
+
+/* Privacy Badges */
+.parry-badge.privacy-a {
+    background-color: rgba(0, 255, 170, 0.15);
+    color: #00ffaa;
+    border: 1px solid #00ffaa;
+}
+.parry-badge.privacy-b {
+    background-color: rgba(0, 240, 255, 0.15);
+    color: #00f0ff;
+    border: 1px solid #00f0ff;
+}
+.parry-badge.privacy-c {
+    background-color: rgba(255, 170, 0, 0.15);
+    color: #ffaa00;
+    border: 1px solid #ffaa00;
+}
+.parry-badge.privacy-d, .parry-badge.privacy-f {
+    background-color: rgba(255, 0, 85, 0.15);
     color: #ff0055;
     border: 1px solid #ff0055;
 }
@@ -184,7 +219,8 @@
     font-family: 'Inter', sans-serif;
     font-size: 14px;
     font-weight: 600;
-    cursor: pointer;
+    cursor: pointer !important;
+    pointer-events: all !important;
     transition: all 0.2s ease;
     width: 100%;
     margin-top: 16px;
@@ -192,6 +228,8 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
+    position: relative;
+    z-index: 1;
 }
 
 .parry-ai-btn:hover {
@@ -555,10 +593,17 @@
     font-family: 'Orbitron', sans-serif;
     font-size: 13px;
     font-weight: 600;
-    cursor: pointer;
+    cursor: pointer !important;
     transition: all 0.2s ease;
     text-transform: uppercase;
     border: none;
+    pointer-events: all !important;
+    outline: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
 }
 
 .parry-btn-primary {
@@ -596,12 +641,15 @@
     background: transparent;
     border: 1px solid rgba(255,255,255,0.2);
     border-radius: 4px;
-    cursor: pointer;
+    cursor: pointer !important;
+    pointer-events: all !important;
     padding: 4px 8px;
     filter: grayscale(1);
     opacity: 0.6;
     transition: all 0.2s;
     font-size: 14px;
+    position: relative;
+    z-index: 1;
 }
 .parry-feedback-btn:hover {
     opacity: 1;
@@ -620,13 +668,17 @@
     background: transparent;
     border: none;
     color: #00f0ff;
-    cursor: pointer;
+    cursor: pointer !important;
+    pointer-events: all !important;
     padding: 4px;
     border-radius: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: all 0.2s ease;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 2;
 }
 .parry-close-btn:hover {
     color: #ffffff;
@@ -1056,8 +1108,11 @@
     border-radius: 4px;
     font-size: 11px;
     padding: 4px 8px;
-    cursor: pointer;
+    cursor: pointer !important;
+    pointer-events: all !important;
     transition: all 0.2s ease;
+    position: relative;
+    z-index: 1;
 }
 .parry-whitelist-btn:hover {
     color: #00ffaa;
@@ -1070,11 +1125,137 @@
     border-radius: 4px;
     font-size: 11px;
     padding: 4px 8px;
-    cursor: pointer;
+    cursor: pointer !important;
+    pointer-events: all !important;
     transition: all 0.2s ease;
+    position: relative;
+    z-index: 1;
 }
 .parry-report-btn:hover {
     color: #ffaa00;
     border-color: #ffaa00;
 }
+
+/* ============================================================
+   Mini Compact Floating Shield (Non-intrusive Mode)
+   ============================================================ */
+#parry-ai-mini-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 2147483647;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background: linear-gradient(145deg, #1e1136 0%, #110924 100%);
+    border: 1.5px solid #00f0ff;
+    border-radius: 30px;
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 12px rgba(0, 240, 255, 0.35);
+    transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    transform: translateX(120%);
+    opacity: 0;
+    user-select: none;
+}
+#parry-ai-mini-container.show {
+    transform: translateX(0);
+    opacity: 1;
+}
+#parry-ai-mini-container:hover {
+    transform: translateY(-2px) scale(1.03);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.7), 0 0 18px rgba(0, 240, 255, 0.6);
+    border-color: #00ffaa;
+}
+.parry-mini-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.parry-mini-badges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.parry-mini-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 12px;
+    text-transform: uppercase;
+}
+.parry-mini-close {
+    background: transparent;
+    border: none;
+    color: #64748b;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border-radius: 50%;
+    margin-left: 4px;
+    transition: color 0.15s;
+}
+.parry-mini-close:hover {
+    color: #ff0055;
+}
+
+/* ============================================================
+   Heuristic Math Formula Card (Settings)
+   ============================================================ */
+.parry-formula-card {
+    background: rgba(10, 15, 30, 0.85);
+    border: 1px solid rgba(0, 240, 255, 0.3);
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 14px;
+    font-family: 'Inter', sans-serif;
+}
+.parry-formula-title {
+    color: #00f0ff;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.parry-formula-box {
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px dashed rgba(0, 240, 255, 0.4);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    color: #38bdf8;
+    margin: 8px 0;
+    line-height: 1.5;
+    overflow-x: auto;
+}
+.parry-formula-breakdown {
+    font-size: 11px;
+    color: #94a3b8;
+    line-height: 1.6;
+    margin-top: 8px;
+}
+.parry-formula-tag {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+    font-size: 10px;
+    margin-right: 4px;
+}
+.parry-tag-heur { background: rgba(176, 38, 255, 0.2); color: #d8b4fe; border: 1px solid rgba(176, 38, 255, 0.4); }
+.parry-tag-sensor { background: rgba(0, 240, 255, 0.2); color: #38bdf8; border: 1px solid rgba(0, 240, 255, 0.4); }
+.parry-tag-privacy { background: rgba(0, 255, 170, 0.2); color: #86efac; border: 1px solid rgba(0, 255, 170, 0.4); }
 
