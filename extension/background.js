@@ -11,7 +11,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ url: urlToAnalyze })
+            body: JSON.stringify({
+                url: urlToAnalyze,
+                trackers_count: request.trackers_count || 0,
+                third_party_scripts_count: request.third_party_scripts_count || 0,
+                has_input_forms: Boolean(request.has_input_forms)
+            })
         })
         .then(response => {
             if (!response.ok) {

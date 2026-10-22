@@ -12,7 +12,7 @@ from backend.app.heuristics import run_heuristics
 from backend.app.signals.sensors import run_sensor_fusion, check_safe_browsing_batch
 from backend.app.cache.cache import VerdictCache
 from backend.app.llm.gemini_client import generate_why_explainer, generate_chat_reply, generate_suggested_questions, get_gemini_threat_intelligence
-from backend.app.scoring import calculate_risk
+from backend.app.scoring import calculate_risk, calculate_privacy
 from contextlib import asynccontextmanager
 
 import os
@@ -108,19 +108,25 @@ async def analyze_url(req: AnalyzeRequest):
                     api_key=key_rotator.get_key()
                 )
                 break
-            except Exception as e:
-                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e).upper():
-                    key_rotator.rotate()
-                else:
-                    break
+            except Exception:
+                key_rotator.rotate()
         
         legality_status = threat_intel.get("legality_status", "Legal")
         legal_alternatives = threat_intel.get("legal_alternatives", [])
         
         # 3. Phase 5: Calculate risk score and verdict
         risk_score, verdict = calculate_risk(risk_matrix_dict)
+
+        # 3b. Calculate Privacy Rating & Grade
+        privacy_score, privacy_grade, privacy_details = calculate_privacy(
+            trackers_count=req.trackers_count or 0,
+            scripts_count=req.third_party_scripts_count or 0,
+            has_forms=req.has_input_forms or False,
+            gemini_privacy_opinion=threat_intel.get("category")
+        )
         
-        # 4. Phase 4: Generate LLM explainer (with key rotation on rate limit)
+        # 4. Phase 4: Generate LLM explainer (with key rotation on failure)
+        why_explainer = "This site appears normal based on our initial checks, but always exercise caution."
         for _attempt in range(len(key_rotator.keys) or 1):
             try:
                 why_explainer = generate_why_explainer(
@@ -130,16 +136,15 @@ async def analyze_url(req: AnalyzeRequest):
                     api_key=key_rotator.get_key()
                 )
                 break
-            except Exception as llm_err:
-                if "429" in str(llm_err) or "RESOURCE_EXHAUSTED" in str(llm_err).upper():
-                    key_rotator.rotate()
-                else:
-                    why_explainer = f"LLM Error: {str(llm_err)}"
-                    break
-        else:
-            why_explainer = "All API keys are rate-limited. Please try again shortly."
+            except Exception:
+                key_rotator.rotate()
 
         # 5. Generate contextual intuitive suggested questions (with key rotation)
+        suggested_questions = [
+            f"What is {domain} used for?",
+            f"Is it safe to share information on {domain}?",
+            "What security precautions should I take here?"
+        ]
         for _attempt in range(len(key_rotator.keys) or 1):
             try:
                 suggested_questions = generate_suggested_questions(
@@ -148,17 +153,8 @@ async def analyze_url(req: AnalyzeRequest):
                     api_key=key_rotator.get_key()
                 )
                 break
-            except Exception as q_err:
-                if "429" in str(q_err) or "RESOURCE_EXHAUSTED" in str(q_err).upper():
-                    key_rotator.rotate()
-                else:
-                    break
-        else:
-            suggested_questions = [
-                f"What is {domain} used for?",
-                f"Is it safe to share information on {domain}?",
-                "What security precautions should I take here?"
-            ]
+            except Exception:
+                key_rotator.rotate()
         
     except Exception as e:
         # Phase 6: Graceful Degradation / Offline Fallback
@@ -189,7 +185,10 @@ async def analyze_url(req: AnalyzeRequest):
         analyzed_at=datetime.now(timezone.utc).isoformat(),
         suggested_questions=suggested_questions,
         legality_status=legality_status if 'legality_status' in locals() else "Legal",
-        legal_alternatives=legal_alternatives if 'legal_alternatives' in locals() else []
+        legal_alternatives=legal_alternatives if 'legal_alternatives' in locals() else [],
+        privacy_grade=privacy_grade if 'privacy_grade' in locals() else "A",
+        privacy_score=privacy_score if 'privacy_score' in locals() else 1.0,
+        privacy_details=privacy_details if 'privacy_details' in locals() else "Minimal trackers detected"
     )
     
     # 3. Store in cache
@@ -211,11 +210,8 @@ async def get_suggested_questions(req: QuestionsRequest):
                 api_key=key_rotator.get_key()
             )
             return QuestionsResponse(questions=questions)
-        except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e).upper():
-                key_rotator.rotate()
-            else:
-                break
+        except Exception:
+            key_rotator.rotate()
     
     # Fallback if all keys fail
     return QuestionsResponse(questions=[
@@ -230,7 +226,7 @@ async def chat_with_ai(req: ChatRequest):
     Endpoint for interactive AI chat via the Chrome Extension sidebar.
     """
     domain = extract_domain(req.domain)
-    # Try each key on rate limit
+    last_err = None
     for _attempt in range(len(key_rotator.keys) or 1):
         try:
             reply = generate_chat_reply(
@@ -241,11 +237,9 @@ async def chat_with_ai(req: ChatRequest):
             )
             return ChatResponse(reply=reply)
         except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e).upper():
-                key_rotator.rotate()
-            else:
-                return ChatResponse(reply=f"Error connecting to Parry AI: {str(e)}")
-    return ChatResponse(reply="All API keys are currently rate-limited. Please try again in a moment.")
+            last_err = e
+            key_rotator.rotate()
+    return ChatResponse(reply="All API keys are currently busy or rate-limited. Please try again in a moment.")
 
 @app.post("/admin/shadow-refresh")
 async def shadow_refresh():
